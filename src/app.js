@@ -10,6 +10,7 @@ const dslOutput = document.querySelector("#dslOutput");
 const objectCount = document.querySelector("#objectCount");
 const actionCount = document.querySelector("#actionCount");
 const commandGrid = document.querySelector("#commandGrid");
+const planList = document.querySelector("#planList");
 
 const palette = {
   red: "#f87171",
@@ -43,6 +44,12 @@ const colorWords = [
 ];
 
 const demoCommands = [
+  "画一只小猫",
+  "画一辆小汽车",
+  "落笔",
+  "向前走一百",
+  "向右转九十度",
+  "换成红色",
   "画一个蓝色圆形放在中间",
   "在它右边画一个红色三角形",
   "把圆形变大一点",
@@ -67,7 +74,14 @@ const supportedActions = [
   "delete_object",
   "undo",
   "redo",
-  "clear_canvas"
+  "clear_canvas",
+  "pen_down",
+  "pen_up",
+  "turtle_forward",
+  "turtle_turn",
+  "turtle_home",
+  "turtle_color",
+  "turtle_width"
 ];
 const llmComplexPattern = /和|同时|一起|旁边|站在|天上|天空|地上|背景|场景|右边有|左边有|上面有|下面有|前面|后面|附近|周围|然后|再|并且/;
 
@@ -78,6 +92,8 @@ const state = {
   lastObjectId: null,
   actionTotal: 0,
   latestDsl: {},
+  latestPlan: [],
+  turtle: initialTurtle(),
   recognition: null,
   listening: false,
   recognitionActive: false,
@@ -102,6 +118,17 @@ function uid(prefix = "obj") {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function initialTurtle() {
+  return {
+    x: 0.5,
+    y: 0.5,
+    angle: 0,
+    penDown: false,
+    stroke: "#1f2937",
+    strokeWidth: 4
+  };
 }
 
 function normalizeSpeechText(text) {
@@ -181,7 +208,9 @@ function snapshot() {
   return JSON.stringify({
     objects: state.objects,
     lastObjectId: state.lastObjectId,
-    actionTotal: state.actionTotal
+    actionTotal: state.actionTotal,
+    latestPlan: state.latestPlan,
+    turtle: state.turtle
   });
 }
 
@@ -190,6 +219,8 @@ function restore(data) {
   state.objects = parsed.objects;
   state.lastObjectId = parsed.lastObjectId;
   state.actionTotal = parsed.actionTotal;
+  state.latestPlan = parsed.latestPlan || [];
+  state.turtle = parsed.turtle || initialTurtle();
 }
 
 function pushHistory() {
@@ -388,6 +419,38 @@ function countFromText(text) {
   return 1;
 }
 
+function numberFromText(text, fallback = null) {
+  const normalized = normalizeSpeechText(text);
+  const digit = normalized.match(/\d+/);
+  if (digit) return Number(digit[0]);
+
+  const digits = { 零: 0, 一: 1, 幺: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (normalized.includes("一百")) return 100;
+  if (normalized.includes("两百") || normalized.includes("二百")) return 200;
+  if (normalized.includes("九十")) return 90;
+  if (normalized.includes("八十")) return 80;
+  if (normalized.includes("七十")) return 70;
+  if (normalized.includes("六十")) return 60;
+  if (normalized.includes("五十")) return 50;
+  if (normalized.includes("四十")) return 40;
+  if (normalized.includes("三十")) return 30;
+  if (normalized.includes("二十") || normalized.includes("两十")) return 20;
+  if (normalized.includes("十")) {
+    const match = normalized.match(/([一二两三四五六七八九])?十([一二两三四五六七八九])?/);
+    if (match) {
+      const tens = match[1] ? digits[match[1]] : 1;
+      const ones = match[2] ? digits[match[2]] : 0;
+      return tens * 10 + ones;
+    }
+    return 10;
+  }
+
+  for (const [word, value] of Object.entries(digits)) {
+    if (normalized.includes(word)) return value;
+  }
+  return fallback;
+}
+
 function targetFromText(text) {
   const normalized = normalizeSpeechText(text);
   if (/刚才|上一个|它|这个/.test(normalized)) return "last_created";
@@ -411,6 +474,97 @@ function relativePlacement(text) {
   return null;
 }
 
+function plannedObjectFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  if (/猫|小猫|猫咪/.test(normalized)) return catPlan();
+  if (/汽车|小车|车子|轿车/.test(normalized)) return carPlan();
+  return null;
+}
+
+function catPlan() {
+  const orange = "#fb923c";
+  return {
+    plan: [
+      "画一个圆形作为小猫的头",
+      "在头顶画两个三角形耳朵",
+      "画眼睛、鼻子和胡须",
+      "在下方画身体",
+      "在右侧画尾巴"
+    ],
+    actions: [
+      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.5, y: 0.36 }, size: 120, label: "小猫头部" },
+      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.43, y: 0.25 }, size: 46, rotation: -18, label: "左耳" },
+      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.57, y: 0.25 }, size: 46, rotation: 18, label: "右耳" },
+      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.47, y: 0.35 }, size: 15, label: "左眼" },
+      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.53, y: 0.35 }, size: 15, label: "右眼" },
+      { type: "create_shape", shape: "triangle", fill: palette.pink, position: { x: 0.5, y: 0.39 }, size: 18, rotation: 180, label: "鼻子" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.42, y: 0.4 }, size: 46, rotation: -8, label: "左胡须" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.42, y: 0.43 }, size: 46, rotation: 8, label: "左胡须" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.58, y: 0.4 }, size: 46, rotation: 8, label: "右胡须" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.58, y: 0.43 }, size: 46, rotation: -8, label: "右胡须" },
+      { type: "create_shape", shape: "circle", fill: "#fdba74", position: { x: 0.5, y: 0.56 }, size: 100, label: "身体" },
+      { type: "create_shape", shape: "line", fill: orange, position: { x: 0.61, y: 0.54 }, size: 80, rotation: -35, label: "尾巴" }
+    ]
+  };
+}
+
+function carPlan() {
+  return {
+    plan: [
+      "画一个圆角矩形作为车身",
+      "在车身上方画车窗",
+      "画两个轮子",
+      "补上车灯和地面线"
+    ],
+    actions: [
+      { type: "create_shape", shape: "rect", fill: palette.blue, position: { x: 0.5, y: 0.55 }, size: 150, label: "车身" },
+      { type: "create_shape", shape: "rect", fill: "#bfdbfe", position: { x: 0.5, y: 0.45 }, size: 76, label: "车窗" },
+      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.42, y: 0.63 }, size: 38, label: "左轮" },
+      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.58, y: 0.63 }, size: 38, label: "右轮" },
+      { type: "create_shape", shape: "circle", fill: "#f8fafc", position: { x: 0.42, y: 0.63 }, size: 16, label: "轮毂" },
+      { type: "create_shape", shape: "circle", fill: "#f8fafc", position: { x: 0.58, y: 0.63 }, size: 16, label: "轮毂" },
+      { type: "create_shape", shape: "circle", fill: palette.yellow, position: { x: 0.64, y: 0.54 }, size: 18, label: "车灯" },
+      { type: "create_shape", shape: "line", fill: palette.gray, position: { x: 0.5, y: 0.7 }, size: 180, label: "地面线" }
+    ]
+  };
+}
+
+function turtleCommandFromText(text) {
+  const normalized = normalizeSpeechText(text);
+
+  if (/落笔|下笔|开始画/.test(normalized)) return { actions: [{ type: "pen_down" }], plan: ["落下画笔，后续移动会留下线条"] };
+  if (/抬笔|提笔|停止画/.test(normalized)) return { actions: [{ type: "pen_up" }], plan: ["抬起画笔，后续移动只改变画笔位置"] };
+  if (/回到中心|回中心|回原点|回到原点/.test(normalized)) return { actions: [{ type: "turtle_home" }], plan: ["把画笔移动回画布中心"] };
+
+  if (/左转|向左转/.test(normalized)) {
+    const angle = numberFromText(normalized, 90);
+    return { actions: [{ type: "turtle_turn", angle: -angle }], plan: [`向左转 ${angle} 度`] };
+  }
+  if (/右转|向右转/.test(normalized)) {
+    const angle = numberFromText(normalized, 90);
+    return { actions: [{ type: "turtle_turn", angle }], plan: [`向右转 ${angle} 度`] };
+  }
+  if (/向后|后退|倒退/.test(normalized)) {
+    const distance = numberFromText(normalized, 80);
+    return { actions: [{ type: "turtle_forward", distance: -distance }], plan: [`向后退 ${distance} 像素`] };
+  }
+  if (/向前|前进|往前|走/.test(normalized)) {
+    const distance = numberFromText(normalized, 80);
+    return { actions: [{ type: "turtle_forward", distance }], plan: [`向前走 ${distance} 像素`] };
+  }
+  if (/换成|改成|颜色/.test(normalized) && hasColorWord(normalized)) {
+    const color = palette[colorFromText(normalized, "black")];
+    return { actions: [{ type: "turtle_color", stroke: color }], plan: ["更换画笔颜色"] };
+  }
+  if (/线条|画笔|笔/.test(normalized) && /粗|细/.test(normalized)) {
+    const current = state.turtle.strokeWidth;
+    const width = /细/.test(normalized) ? Math.max(1, current - 1) : Math.min(12, current + 1);
+    return { actions: [{ type: "turtle_width", width }], plan: [`把画笔线宽调到 ${width}`] };
+  }
+
+  return null;
+}
+
 function parseCommand(text) {
   const normalized = normalizeSpeechText(text);
   const actions = [];
@@ -424,6 +578,12 @@ function parseCommand(text) {
   if (/清空|清除全部|全部删除/.test(normalized)) {
     return { actions: [{ type: "clear_canvas" }] };
   }
+
+  const turtleCommand = turtleCommandFromText(normalized);
+  if (turtleCommand) return turtleCommand;
+
+  const plannedObject = plannedObjectFromText(normalized);
+  if (plannedObject) return plannedObject;
 
   const segments = String(text || "")
     .toLowerCase()
@@ -533,6 +693,7 @@ function isExecutableDsl(dsl) {
 
 function shouldUseLlm(text, localDsl) {
   if (state.llmInFlight || state.llmAvailable === false) return false;
+  if (Array.isArray(localDsl?.plan) && localDsl.plan.length) return false;
   const normalized = normalizeSpeechText(text);
   if (localDsl?.clarification) return true;
   if (llmComplexPattern.test(normalized)) return true;
@@ -574,20 +735,58 @@ function sanitizeAction(action) {
     return { type: action.type };
   }
 
+  if (action.type === "pen_down" || action.type === "pen_up" || action.type === "turtle_home") {
+    return { type: action.type };
+  }
+
+  if (action.type === "turtle_forward") {
+    const distance = Number(action.distance);
+    return {
+      type: "turtle_forward",
+      distance: Number.isFinite(distance) ? clamp(distance, -260, 260) : 80
+    };
+  }
+
+  if (action.type === "turtle_turn") {
+    const angle = Number(action.angle);
+    return {
+      type: "turtle_turn",
+      angle: Number.isFinite(angle) ? clamp(angle, -360, 360) : 90
+    };
+  }
+
+  if (action.type === "turtle_color") {
+    return {
+      type: "turtle_color",
+      stroke: normalizeFill(action.stroke || action.fill, palette.black)
+    };
+  }
+
+  if (action.type === "turtle_width") {
+    const width = Number(action.width);
+    return {
+      type: "turtle_width",
+      width: Number.isFinite(width) ? clamp(width, 1, 14) : 4
+    };
+  }
+
   if (action.type === "create_shape") {
     const shape = supportedShapes.includes(action.shape) ? action.shape : null;
     if (!shape) return null;
     const size = Number(action.size);
+    const fill = normalizeFill(action.fill, shape === "text" ? palette.black : palette.blue);
     return {
       type: "create_shape",
       shape,
       text: String(action.text || "").slice(0, 24),
-      fill: normalizeFill(action.fill, shape === "text" ? palette.black : palette.blue),
-      stroke: "#1f2937",
+      fill,
+      stroke: shape === "line" || shape === "arrow" ? normalizeFill(action.stroke || action.fill, fill) : "#1f2937",
       strokeWidth: 3,
       position: sanitizePosition(action.position) || "center",
       relativeTo: sanitizeRelativeTo(action.relativeTo),
       size: Number.isFinite(size) ? clamp(size, 48, 260) : 120,
+      rotation: Number.isFinite(Number(action.rotation)) ? clamp(Number(action.rotation), -360, 360) : 0,
+      label: String(action.label || "").slice(0, 20),
       style: "cute_flat"
     };
   }
@@ -661,6 +860,9 @@ function sanitizeDsl(dsl) {
 
   return {
     source: dsl.source || "llm",
+    plan: Array.isArray(dsl.plan)
+      ? dsl.plan.map((step) => String(step || "").trim()).filter(Boolean).slice(0, 10)
+      : [],
     actions
   };
 }
@@ -804,6 +1006,7 @@ function executeDsl(dsl) {
   }
 
   state.latestDsl = dsl;
+  state.latestPlan = Array.isArray(dsl.plan) ? dsl.plan : [];
   dslOutput.textContent = JSON.stringify(dsl, null, 2);
 
   const actions = Array.isArray(dsl.actions) ? dsl.actions : [];
@@ -833,8 +1036,24 @@ function executeAction(action) {
     pushHistory();
     state.objects = [];
     state.lastObjectId = null;
+    state.latestPlan = [];
+    state.turtle = initialTurtle();
     state.actionTotal += 1;
     addLog("清空画布");
+    return;
+  }
+  if ([
+    "pen_down",
+    "pen_up",
+    "turtle_forward",
+    "turtle_turn",
+    "turtle_home",
+    "turtle_color",
+    "turtle_width"
+  ].includes(action.type)) {
+    pushHistory();
+    executeTurtleAction(action);
+    state.actionTotal += 1;
     return;
   }
 
@@ -857,6 +1076,78 @@ function executeAction(action) {
   state.actionTotal += 1;
 }
 
+function executeTurtleAction(action) {
+  if (action.type === "pen_down") {
+    state.turtle.penDown = true;
+    addLog("落笔");
+    return;
+  }
+
+  if (action.type === "pen_up") {
+    state.turtle.penDown = false;
+    addLog("抬笔");
+    return;
+  }
+
+  if (action.type === "turtle_turn") {
+    state.turtle.angle = (state.turtle.angle + action.angle + 360) % 360;
+    addLog(`${action.angle >= 0 ? "右转" : "左转"}${Math.abs(action.angle)}度`);
+    return;
+  }
+
+  if (action.type === "turtle_home") {
+    state.turtle.x = 0.5;
+    state.turtle.y = 0.5;
+    state.turtle.angle = 0;
+    addLog("画笔回到中心");
+    return;
+  }
+
+  if (action.type === "turtle_color") {
+    state.turtle.stroke = action.stroke || palette.black;
+    addLog("更换画笔颜色");
+    return;
+  }
+
+  if (action.type === "turtle_width") {
+    state.turtle.strokeWidth = clamp(action.width || 4, 1, 14);
+    addLog(`画笔线宽 ${state.turtle.strokeWidth}`);
+    return;
+  }
+
+  if (action.type === "turtle_forward") {
+    const { width, height } = canvasSize();
+    const distance = Number(action.distance) || 80;
+    const angle = (state.turtle.angle * Math.PI) / 180;
+    const from = { x: state.turtle.x, y: state.turtle.y };
+    const to = {
+      x: clamp(from.x + (Math.cos(angle) * distance) / Math.max(1, width), 0.04, 0.96),
+      y: clamp(from.y + (Math.sin(angle) * distance) / Math.max(1, height), 0.04, 0.96)
+    };
+
+    if (state.turtle.penDown) {
+      const object = {
+        id: uid("stroke"),
+        kind: "stroke",
+        label: "画笔线条",
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+        points: [from, to],
+        stroke: state.turtle.stroke,
+        strokeWidth: state.turtle.strokeWidth
+      };
+      state.objects.push(object);
+      state.lastObjectId = object.id;
+    }
+
+    state.turtle.x = to.x;
+    state.turtle.y = to.y;
+    addLog(`${distance >= 0 ? "前进" : "后退"}${Math.abs(distance)}像素`);
+  }
+}
+
 function createShape(action) {
   const base = typeof action.size === "number" ? action.size : 120;
   const point = action.relativeTo
@@ -868,19 +1159,20 @@ function createShape(action) {
     kind: "shape",
     shape: action.shape,
     label: shapeLabel(action.shape),
+    customLabel: action.label || "",
     text: action.text || "",
     x: point.x,
     y: point.y,
     w: action.shape === "line" || action.shape === "arrow" ? base * 1.55 : base,
     h: action.shape === "line" || action.shape === "arrow" ? 18 : base,
     fill: action.fill || palette.blue,
-    stroke: action.stroke || "#1f2937",
+    stroke: action.stroke || (action.shape === "line" || action.shape === "arrow" ? action.fill : "#1f2937"),
     strokeWidth: action.strokeWidth || 3,
-    rotation: 0
+    rotation: Number(action.rotation) || 0
   };
   state.objects.push(object);
   state.lastObjectId = object.id;
-  addLog(`创建${object.label}`);
+  addLog(`创建${displayObjectLabel(object)}`);
 }
 
 function createComposite(action) {
@@ -1022,6 +1314,7 @@ function draw() {
   for (const object of state.objects) {
     drawObject(object);
   }
+  drawTurtleCursor(width, height);
 }
 
 function drawPaper(width, height) {
@@ -1048,16 +1341,61 @@ function drawPaper(width, height) {
 function drawObject(object) {
   ctx.save();
   ctx.translate(object.x, object.y);
+  if (object.rotation) {
+    ctx.rotate((object.rotation * Math.PI) / 180);
+  }
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  if (object.kind === "shape") {
+  if (object.kind === "stroke") {
+    drawStroke(object);
+  } else if (object.kind === "shape") {
     drawShape(object);
   } else {
     drawComposite(object);
   }
-  if (object.id === state.lastObjectId) {
+  if (object.id === state.lastObjectId && object.kind !== "stroke") {
     drawSelection(object);
   }
+  ctx.restore();
+}
+
+function drawStroke(object) {
+  const { width, height } = canvasSize();
+  if (!Array.isArray(object.points) || object.points.length < 2) return;
+  ctx.strokeStyle = object.stroke || palette.black;
+  ctx.lineWidth = object.strokeWidth || 4;
+  ctx.beginPath();
+  object.points.forEach((point, index) => {
+    const x = point.x * width;
+    const y = point.y * height;
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
+}
+
+function drawTurtleCursor(width, height) {
+  const x = state.turtle.x * width;
+  const y = state.turtle.y * height;
+  const angle = (state.turtle.angle * Math.PI) / 180;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.fillStyle = state.turtle.penDown ? "#0f766e" : "#64748b";
+  ctx.strokeStyle = "#1f2937";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(16, 0);
+  ctx.lineTo(-10, -9);
+  ctx.lineTo(-5, 0);
+  ctx.lineTo(-10, 9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -1341,25 +1679,43 @@ function drawSelection(object) {
   ctx.restore();
 }
 
+function displayObjectLabel(object) {
+  return object.customLabel || object.label || "对象";
+}
+
 function updatePanels() {
   objectCount.textContent = String(state.objects.length);
   actionCount.textContent = String(state.actionTotal);
   layerList.innerHTML = "";
+  planList.innerHTML = "";
 
   if (!state.objects.length) {
     const empty = document.createElement("li");
     empty.textContent = "画布为空";
     layerList.appendChild(empty);
+  } else {
+    [...state.objects].reverse().forEach((object, index) => {
+      const item = document.createElement("li");
+      item.textContent = `${state.objects.length - index}. ${displayObjectLabel(object)}`;
+      if (object.id === state.lastObjectId) {
+        item.classList.add("is-active");
+      }
+      layerList.appendChild(item);
+    });
+  }
+
+  if (!state.latestPlan.length) {
+    const empty = document.createElement("li");
+    empty.textContent = "等待可拆解的绘图口令";
+    empty.classList.add("is-empty");
+    planList.appendChild(empty);
     return;
   }
 
-  [...state.objects].reverse().forEach((object, index) => {
+  state.latestPlan.forEach((step) => {
     const item = document.createElement("li");
-    item.textContent = `${state.objects.length - index}. ${object.label}`;
-    if (object.id === state.lastObjectId) {
-      item.classList.add("is-active");
-    }
-    layerList.appendChild(item);
+    item.textContent = step;
+    planList.appendChild(item);
   });
 }
 

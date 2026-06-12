@@ -274,7 +274,8 @@ h1 {
 }
 
 .log-list,
-.layer-list {
+.layer-list,
+.plan-list {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -284,13 +285,46 @@ h1 {
 }
 
 .log-list li,
-.layer-list li {
+.layer-list li,
+.plan-list li {
   padding: 9px 10px;
   border-radius: var(--radius);
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   font-size: 13px;
   line-height: 1.4;
+}
+
+.plan-list {
+  counter-reset: plan-step;
+}
+
+.plan-list li {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.plan-list li::before {
+  counter-increment: plan-step;
+  content: counter(plan-step);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.plan-list li.is-empty::before {
+  content: "-";
+  counter-increment: none;
+  background: #f1f5f9;
+  color: #64748b;
 }
 
 .log-list li.is-error {
@@ -331,7 +365,7 @@ h1 {
   .right-panel {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: 220px 1fr 1fr;
+    grid-template-columns: 220px 1fr 1fr 1fr;
   }
 }
 
