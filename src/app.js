@@ -3,6 +3,7 @@ const ctx = canvas.getContext("2d");
 const listenButton = document.querySelector("#listenButton");
 const speechStatus = document.querySelector("#speechStatus");
 const transcriptText = document.querySelector("#transcriptText");
+const speechHint = document.querySelector("#speechHint");
 const logList = document.querySelector("#logList");
 const layerList = document.querySelector("#layerList");
 const dslOutput = document.querySelector("#dslOutput");
@@ -57,7 +58,10 @@ const state = {
   actionTotal: 0,
   latestDsl: {},
   recognition: null,
-  listening: false
+  listening: false,
+  micReady: false,
+  silenceTimer: null,
+  speechStarted: false
 };
 
 function uid(prefix = "obj") {
@@ -113,11 +117,38 @@ function addLog(message, type = "info") {
   }
 }
 
+function setSpeechHint(message, type = "info") {
+  speechHint.textContent = message;
+  speechHint.classList.toggle("is-warning", type === "warning");
+  speechHint.classList.toggle("is-error", type === "error");
+}
+
 function setListening(isListening) {
   state.listening = isListening;
   listenButton.classList.toggle("is-listening", isListening);
   speechStatus.classList.toggle("is-listening", isListening);
   speechStatus.textContent = isListening ? "监听中" : "已暂停";
+  if (!isListening) {
+    clearSilenceTimer();
+  }
+}
+
+function clearSilenceTimer() {
+  if (state.silenceTimer) {
+    window.clearTimeout(state.silenceTimer);
+    state.silenceTimer = null;
+  }
+}
+
+function startSilenceTimer() {
+  clearSilenceTimer();
+  state.speechStarted = false;
+  state.silenceTimer = window.setTimeout(() => {
+    if (state.listening && !state.speechStarted) {
+      setSpeechHint("还没有识别到声音。请确认浏览器允许麦克风、系统输入设备正确，并尽量使用 Chrome 打开 http://localhost:5173。", "warning");
+      addLog("监听中，但暂未识别到语音", "error");
+    }
+  }, 7000);
 }
 
 function resizeCanvas() {
@@ -983,8 +1014,53 @@ function handleSpeech(text) {
   const cleaned = text.trim();
   if (!cleaned) return;
   transcriptText.textContent = cleaned;
+  setSpeechHint("已识别语音，正在执行绘图指令。");
   const dsl = parseCommand(cleaned);
   executeDsl(dsl);
+}
+
+async function ensureMicAccess() {
+  if (state.micReady) return true;
+
+  if (!window.isSecureContext) {
+    setSpeechHint("当前地址不是安全上下文。请改用 http://localhost:5173 或 http://127.0.0.1:5173 打开。", "error");
+    addLog("麦克风需要安全上下文，建议使用 localhost 地址", "error");
+    return false;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setSpeechHint("当前浏览器不支持麦克风权限检测，请换 Chrome。", "error");
+    addLog("浏览器不支持 getUserMedia", "error");
+    return false;
+  }
+
+  try {
+    setSpeechHint("正在请求麦克风权限，请在浏览器弹窗中选择允许。");
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((track) => track.stop());
+    state.micReady = true;
+    setSpeechHint("麦克风权限已允许，开始讲话即可。");
+    return true;
+  } catch (error) {
+    const message = error?.name === "NotAllowedError"
+      ? "浏览器麦克风权限被拒绝，请点击地址栏左侧权限图标重新允许。"
+      : `麦克风不可用：${error?.message || error?.name || "未知错误"}`;
+    setSpeechHint(message, "error");
+    addLog(message, "error");
+    return false;
+  }
+}
+
+function speechErrorMessage(error) {
+  const map = {
+    "no-speech": "没有检测到语音，请靠近麦克风再试。",
+    "audio-capture": "没有检测到可用麦克风，请检查系统输入设备。",
+    "not-allowed": "浏览器拒绝了麦克风权限，请重新允许。",
+    "network": "语音识别服务网络不可达。Chrome 的 SpeechRecognition 可能需要联网识别。",
+    "language-not-supported": "当前语音识别不支持中文。",
+    "language-unavailable": "当前中文语音识别服务不可用。"
+  };
+  return map[error] || `语音识别错误：${error}`;
 }
 
 function setupSpeech() {
@@ -992,6 +1068,7 @@ function setupSpeech() {
   if (!SpeechRecognition) {
     speechStatus.textContent = "不支持";
     listenButton.disabled = true;
+    setSpeechHint("当前浏览器不支持 Web Speech API。请使用 Chrome，或后续接入云端 ASR。", "error");
     addLog("当前浏览器不支持 Web Speech API，建议使用 Chrome。", "error");
     return;
   }
@@ -1000,14 +1077,45 @@ function setupSpeech() {
   recognition.lang = "zh-CN";
   recognition.continuous = true;
   recognition.interimResults = true;
+  recognition.maxAlternatives = 3;
 
-  recognition.onstart = () => setListening(true);
-  recognition.onend = () => setListening(false);
+  recognition.onstart = () => {
+    setListening(true);
+    setSpeechHint("正在监听，请说出绘图指令。");
+    startSilenceTimer();
+  };
+  recognition.onaudiostart = () => {
+    setSpeechHint("麦克风已开始采集声音。");
+  };
+  recognition.onsoundstart = () => {
+    state.speechStarted = true;
+    setSpeechHint("听到声音了，正在判断是否为语音。");
+  };
+  recognition.onspeechstart = () => {
+    state.speechStarted = true;
+    setSpeechHint("听到语音了，正在识别文字。");
+  };
+  recognition.onspeechend = () => {
+    setSpeechHint("语音结束，等待识别结果。");
+  };
+  recognition.onnomatch = () => {
+    setSpeechHint("听到了声音，但没有匹配出可用文字，请再说一遍。", "warning");
+    addLog("听到声音但未识别出文字", "error");
+  };
+  recognition.onend = () => {
+    setListening(false);
+    if (state.micReady) {
+      setSpeechHint("监听已暂停，点击麦克风可重新开始。");
+    }
+  };
   recognition.onerror = (event) => {
-    addLog(`语音识别错误：${event.error}`, "error");
+    const message = speechErrorMessage(event.error);
+    setSpeechHint(message, "error");
+    addLog(message, "error");
     setListening(false);
   };
   recognition.onresult = (event) => {
+    clearSilenceTimer();
     let interim = "";
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const result = event.results[i];
@@ -1020,18 +1128,29 @@ function setupSpeech() {
     }
     if (interim) {
       transcriptText.textContent = interim;
+      setSpeechHint("正在实时识别语音。");
     }
   };
 
   state.recognition = recognition;
 }
 
-listenButton.addEventListener("click", () => {
+listenButton.addEventListener("click", async () => {
   if (!state.recognition) return;
   if (state.listening) {
     state.recognition.stop();
   } else {
-    state.recognition.start();
+    const canUseMic = await ensureMicAccess();
+    if (!canUseMic) return;
+    try {
+      state.recognition.start();
+    } catch (error) {
+      const message = error?.name === "InvalidStateError"
+        ? "语音识别已经在运行。"
+        : `启动语音识别失败：${error?.message || error?.name || "未知错误"}`;
+      setSpeechHint(message, "error");
+      addLog(message, "error");
+    }
   }
 });
 

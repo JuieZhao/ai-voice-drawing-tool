@@ -200,6 +200,21 @@ h1 {
   line-height: 1.5;
 }
 
+.speech-hint {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.speech-hint.is-warning {
+  color: #b45309;
+}
+
+.speech-hint.is-error {
+  color: #991b1b;
+}
+
 .command-grid {
   display: grid;
   grid-template-columns: 1fr;
