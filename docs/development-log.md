@@ -1,17 +1,16 @@
 # 持续交付记录
 
-本文档用于记录 72 小时比赛开发过程中的阶段性工作、提交和 Pull Request。比赛要求强调“全周期持续交付”，因此本仓库从第一版 MVP 后开始采用功能分支和 PR 记录开发过程。
+本文档记录 72 小时比赛开发过程中的 commit 与 Pull Request。比赛要求强调“全周期持续交付”，因此本仓库从第一版 MVP 后开始采用功能分支和 PR 记录开发过程，并保持 `main` 分支可运行。
 
 ## 1. 当前仓库状态
 
 | 项目 | 内容 |
 | --- | --- |
-| 仓库 | `JuieZhao/ai-voice-drawing-tool` |
+| 仓库 | `https://github.com/JuieZhao/ai-voice-drawing-tool` |
 | 主分支 | `main` |
-| 当前功能分支 | `feature/speech-diagnostics-and-delivery-docs` |
-| 当前 PR | `#1 Improve speech diagnostics and delivery docs` |
-| PR 地址 | `https://github.com/JuieZhao/ai-voice-drawing-tool/pull/1` |
-| 当前策略 | 保持 `main` 可运行，每个后续能力通过 PR 合入 |
+| 当前策略 | 每个后续能力通过独立分支和 PR 合入 |
+| 仓库可见性 | 开发期 private，提交评审前/评审期按要求改为 public 或确保评委可访问 |
+| 本地验证 | `npm run check`、`python -m http.server 5173` |
 
 ## 2. 提交原则
 
@@ -22,13 +21,14 @@
 5. 不在最后一天一次性导入大段代码。
 6. PR 合并前必须说明验证方式，至少包含 `npm run check`。
 7. 语音、绘图、Prompt、文档类修改尽量拆成不同 PR，避免一个 PR 过大。
+8. 若后续引入第三方库、历史代码或外部素材，必须在 README 和 PR 描述中说明来源与用途。
 
 ## 3. 分支命名
 
 | 类型 | 格式 | 示例 |
 | --- | --- | --- |
-| 功能 | `feature/<name>` | `feature/llm-dsl-parser` |
-| 文档 | `docs/<name>` | `docs/demo-script` |
+| 功能 | `feature/<name>` | `feature/command-parser-v2` |
+| 文档 | `docs/<name>` | `docs/submission-compliance` |
 | 修复 | `fix/<name>` | `fix/speech-permission` |
 | 视觉打磨 | `polish/<name>` | `polish/composite-templates` |
 | 发布准备 | `release/<name>` | `release/submission-docs` |
@@ -40,7 +40,12 @@
 | 2026-06-12 | `main` | `c59a4de` | 初始化声绘板 MVP：静态页面、Canvas 绘图、语音入口、基础 DSL、组合对象、README 和设计文档 |
 | 2026-06-12 | `main` | `ba8ec8d` | 增加 favicon，清理浏览器自动请求的 404 |
 | 2026-06-12 | `feature/speech-diagnostics-and-delivery-docs` | `bf8e845` | 增强麦克风权限检测、语音状态提示、错误提示；补充持续交付文档和语音指令能力清单 |
-| 2026-06-12 | `feature/speech-diagnostics-and-delivery-docs` | PR `#1` | 首个正式 PR，记录语音诊断修复和持续交付材料 |
+| 2026-06-12 | `feature/speech-diagnostics-and-delivery-docs` | PR `#1` | 合入语音诊断修复和初版持续交付材料 |
+| 2026-06-12 | `docs/complete-delivery-documentation` | `d50a715` | 补完整持续交付记录、PR 模板和指令验收脚本 |
+| 2026-06-12 | `docs/complete-delivery-documentation` | PR `#2` | 合入完整持续交付文档 |
+| 2026-06-12 | `docs/submission-compliance` | PR `#3` | 补齐提交规则、依赖、原创说明、Demo 占位和提交检查清单 |
+
+所有已列 commit 均在本批次开始时间 2026-06-12 00:00 之后产生。
 
 ## 5. PR 记录
 
@@ -58,57 +63,72 @@ https://github.com/JuieZhao/ai-voice-drawing-tool/pull/1
 feature/speech-diagnostics-and-delivery-docs -> main
 ```
 
-目标：
+功能描述：
 
-1. 修复“点击麦克风后用户不知道是否正在监听”的体验问题。
-2. 增加麦克风权限检测和错误提示。
-3. 明确 Web Speech API 的浏览器限制和排查路径。
-4. 建立持续交付记录和指令能力清单。
+增强语音识别启动阶段的可见反馈，让用户知道系统是正在请求麦克风权限、正在监听、听到声音、正在识别，还是因为权限、设备或网络原因失败。
 
-验收标准：
+实现思路：
 
-| 验收项 | 状态 |
-| --- | --- |
-| 点击麦克风前有明确提示 | 已完成 |
-| 点击麦克风后请求浏览器权限 | 已完成 |
-| 权限失败时显示原因 | 已完成 |
-| 识别服务网络失败时提示原因 | 已完成 |
-| 无声音时有超时提示 | 已完成 |
-| README 有麦克风排查说明 | 已完成 |
-| docs 有持续交付记录 | 已完成 |
-| docs 有指令能力清单 | 已完成 |
+1. 使用 `navigator.mediaDevices.getUserMedia({ audio: true })` 预检麦克风权限。
+2. 监听 `SpeechRecognition` 的 `onstart`、`onaudiostart`、`onsoundstart`、`onspeechstart`、`onnomatch`、`onerror`、`onend`。
+3. 在页面中新增 `speechHint` 状态提示。
+4. 增加 README 麦克风排查说明。
 
-验证方式：
+测试方式：
 
 ```bash
 npm run check
 python -m http.server 5173
 ```
 
-浏览器访问：
-
-```text
-http://localhost:5173
-```
-
 人工验证：
 
-1. 点击右上角麦克风按钮。
-2. 浏览器弹窗中允许麦克风权限。
-3. 页面提示应进入“正在监听”或“麦克风已开始采集声音”状态。
+1. 打开 `http://localhost:5173`。
+2. 点击右上角麦克风按钮。
+3. 允许浏览器麦克风权限。
 4. 说出“画一个蓝色圆形放在中间”。
-5. 如果浏览器支持识别且网络可用，画布应创建蓝色圆形。
-6. 如果识别失败，页面应显示具体失败原因。
+5. 如果浏览器支持识别且网络可用，画布应创建蓝色圆形；否则页面应显示具体失败原因。
+
+### PR #2：Complete delivery documentation
+
+地址：
+
+```text
+https://github.com/JuieZhao/ai-voice-drawing-tool/pull/2
+```
+
+分支：
+
+```text
+docs/complete-delivery-documentation -> main
+```
+
+功能描述：
+
+补齐比赛持续交付文档、指令验收脚本和 PR 模板，使后续每个 PR 都能按比赛规范描述功能、实现思路和测试方式。
+
+实现思路：
+
+1. 扩展 `docs/development-log.md`，记录当前 PR 流程、时间线、验收标准和后续计划。
+2. 扩展 `docs/command-list.md`，加入基础和组合对象验收口令。
+3. 新增 `.github/pull_request_template.md`，约束后续 PR 描述结构。
+4. 更新 README 项目结构。
+
+测试方式：
+
+```bash
+npm run check
+```
 
 ## 6. 后续计划 PR
 
 | PR | 分支建议 | 目标 | 验收标准 |
 | --- | --- | --- | --- |
-| PR 2 | `feature/command-parser-v2` | 指令解析增强 | 多段语音指令、相对位置、对象引用更稳定 |
-| PR 3 | `polish/composite-templates` | 组合对象美术打磨 | 太阳、云、树、房子、小女孩风格更统一 |
-| PR 4 | `feature/scene-layout` | 复杂场景生成 | 一句话生成小场景并自动布局 |
-| PR 5 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
-| PR 6 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 脚本和视频说明完整 |
+| PR 4 | `feature/command-parser-v2` | 指令解析增强 | 多段语音指令、相对位置、对象引用更稳定 |
+| PR 5 | `polish/composite-templates` | 组合对象美术打磨 | 太阳、云、树、房子、小女孩风格更统一 |
+| PR 6 | `feature/scene-layout` | 复杂场景生成 | 一句话生成小场景并自动布局 |
+| PR 7 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
+| PR 8 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 视频链接完整 |
 
 ## 7. 每个 PR 的固定检查清单
 
@@ -136,7 +156,7 @@ http://localhost:5173
 2. 控制台无明显错误。
 3. 本 PR 相关功能可以复现。
 4. README 或 DESIGN 中记录关键取舍。
-5. PR 描述中写清楚验证方式。
+5. PR 描述中写清楚标题、功能描述、实现思路和测试方式。
 
 ## 8. 推荐 Demo 口令
 
@@ -165,15 +185,3 @@ http://localhost:5173
 ```text
 画一个小女孩站在房子旁边，天上有太阳和云，右边有一棵树
 ```
-
-## 9. 当前未合入内容
-
-当前 `main` 分支还没有包含 PR #1 的语音诊断修复和文档补充。原因是为了保留完整 PR 流程记录。
-
-合入 PR #1 后，`main` 将包含：
-
-1. 麦克风权限检测。
-2. 语音状态提示。
-3. Web Speech API 失败原因提示。
-4. 指令能力清单。
-5. 持续交付记录。
