@@ -28,8 +28,11 @@ const palette = {
 const colorWords = [
   ["红", "red"],
   ["蓝", "blue"],
+  ["兰", "blue"],
+  ["篮", "blue"],
   ["黄", "yellow"],
   ["绿", "green"],
+  ["录", "green"],
   ["粉", "pink"],
   ["紫", "purple"],
   ["黑", "black"],
@@ -59,9 +62,14 @@ const state = {
   latestDsl: {},
   recognition: null,
   listening: false,
+  recognitionActive: false,
   micReady: false,
   silenceTimer: null,
-  speechStarted: false
+  resultTimer: null,
+  restartTimer: null,
+  speechStarted: false,
+  stopRequested: false,
+  lastFinalText: ""
 };
 
 function uid(prefix = "obj") {
@@ -70,6 +78,79 @@ function uid(prefix = "obj") {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeSpeechText(text) {
+  let output = String(text || "")
+    .trim()
+    .replace(/[，。！？、,.!?;；:：\s]/g, "");
+
+  const replacements = [
+    [/^(花|化|华)(?=(一|个|两|二|三|四|五|出|上|下|左|右|大|小|条|根|朵|座|只))/, "画"],
+    [/兰色|篮色|蓝涩/g, "蓝色"],
+    [/洪色|虹色/g, "红色"],
+    [/录色|路色/g, "绿色"],
+    [/原形|圆型|园形|圆行|原型/g, "圆形"],
+    [/圈圈/g, "圆形"],
+    [/三角型|三角行/g, "三角形"],
+    [/长房形|长方型/g, "长方形"],
+    [/正房形|正方型/g, "正方形"],
+    [/巨型|举行/g, "矩形"],
+    [/剪头/g, "箭头"],
+    [/太杨/g, "太阳"],
+    [/云多/g, "云朵"],
+    [/房屋|小屋子/g, "房子"],
+    [/女孩子|小女还/g, "小女孩"],
+    [/上一步|上一部|上1步/g, "上一步"],
+    [/撤消|取消上一步|返回上一步|退一步/g, "撤销"],
+    [/从做|重新做/g, "重做"],
+    [/清除全部|全部清除|全部删除|清屏/g, "清空"],
+    [/左面|左侧/g, "左边"],
+    [/右面|右侧|有边|优边/g, "右边"],
+    [/上方|顶部/g, "上面"],
+    [/下方|底部/g, "下面"]
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    output = output.replace(pattern, replacement);
+  }
+
+  return output;
+}
+
+function hasColorWord(text) {
+  const normalized = normalizeSpeechText(text);
+  return colorWords.some(([word]) => normalized.includes(word));
+}
+
+function commandScore(text) {
+  const normalized = normalizeSpeechText(text);
+  let score = 0;
+
+  if (!normalized) return score;
+  if (/画|写|放|在|把|改|变|移|撤销|重做|清空|删除/.test(normalized)) score += 2;
+  if (shapeFromText(normalized)) score += 8;
+  if (compositeFromText(normalized)) score += 8;
+  if (hasColorWord(normalized)) score += 3;
+  if (positionFromText(normalized)) score += 3;
+  if (/变大|放大|变小|缩小|改成|换成|移动|移到|删除|撤销|重做|清空/.test(normalized)) score += 5;
+  if (/右边|左边|上面|下面|中间|左上|右上|左下|右下/.test(normalized)) score += 3;
+  if (/圆|矩形|三角|线|箭头|太阳|云|树|房子|花朵|小女孩/.test(normalized)) score += 4;
+
+  return score;
+}
+
+function pickBestTranscript(alternatives) {
+  const candidates = alternatives
+    .map((text) => ({
+      raw: String(text || "").trim(),
+      normalized: normalizeSpeechText(text),
+      score: commandScore(text)
+    }))
+    .filter((candidate) => candidate.raw);
+
+  candidates.sort((a, b) => b.score - a.score || b.normalized.length - a.normalized.length);
+  return candidates[0] || { raw: "", normalized: "", score: 0 };
 }
 
 function snapshot() {
@@ -140,8 +221,23 @@ function clearSilenceTimer() {
   }
 }
 
+function clearResultTimer() {
+  if (state.resultTimer) {
+    window.clearTimeout(state.resultTimer);
+    state.resultTimer = null;
+  }
+}
+
+function clearRestartTimer() {
+  if (state.restartTimer) {
+    window.clearTimeout(state.restartTimer);
+    state.restartTimer = null;
+  }
+}
+
 function startSilenceTimer() {
   clearSilenceTimer();
+  clearResultTimer();
   state.speechStarted = false;
   state.silenceTimer = window.setTimeout(() => {
     if (state.listening && !state.speechStarted) {
@@ -149,6 +245,16 @@ function startSilenceTimer() {
       addLog("监听中，但暂未识别到语音", "error");
     }
   }, 7000);
+}
+
+function startResultTimer() {
+  clearResultTimer();
+  state.resultTimer = window.setTimeout(() => {
+    if (state.listening && state.speechStarted) {
+      setSpeechHint("已经听到声音，但还没有返回文字。请换用 http://localhost:5173，并确认 Chrome 语音识别服务网络可用。", "warning");
+      addLog("听到声音，但未返回文字", "error");
+    }
+  }, 9000);
 }
 
 function resizeCanvas() {
@@ -196,86 +302,93 @@ function toPoint(position, size = { width: 120, height: 120 }) {
 }
 
 function positionFromText(text) {
-  if (/左上|左上角/.test(text)) return "top_left";
-  if (/右上|右上角/.test(text)) return "top_right";
-  if (/左下|左下角/.test(text)) return "bottom_left";
-  if (/右下|右下角/.test(text)) return "bottom_right";
-  if (/中间|中央|中心/.test(text)) return "center";
-  if (/左边|左侧/.test(text)) return "left";
-  if (/右边|右侧/.test(text)) return "right";
-  if (/上面|上方|顶部|天上/.test(text)) return "top";
-  if (/下面|下方|底部|地上/.test(text)) return "bottom";
+  const normalized = normalizeSpeechText(text);
+  if (/左上|左上角/.test(normalized)) return "top_left";
+  if (/右上|右上角/.test(normalized)) return "top_right";
+  if (/左下|左下角/.test(normalized)) return "bottom_left";
+  if (/右下|右下角/.test(normalized)) return "bottom_right";
+  if (/中间|中央|中心/.test(normalized)) return "center";
+  if (/左边/.test(normalized)) return "left";
+  if (/右边/.test(normalized)) return "right";
+  if (/上面|天上/.test(normalized)) return "top";
+  if (/下面|地上/.test(normalized)) return "bottom";
   return null;
 }
 
 function sizeFromText(text, fallback = 120) {
-  if (/很大|巨大|大一点|放大/.test(text)) return Math.round(fallback * 1.25);
-  if (/很小|小一点|缩小/.test(text)) return Math.round(fallback * 0.78);
-  if (/小/.test(text)) return Math.round(fallback * 0.82);
-  if (/大/.test(text)) return Math.round(fallback * 1.18);
+  const normalized = normalizeSpeechText(text);
+  if (/很大|巨大|大一点|放大/.test(normalized)) return Math.round(fallback * 1.25);
+  if (/很小|小一点|缩小/.test(normalized)) return Math.round(fallback * 0.78);
+  if (/小/.test(normalized)) return Math.round(fallback * 0.82);
+  if (/大/.test(normalized)) return Math.round(fallback * 1.18);
   return fallback;
 }
 
 function colorFromText(text, fallback = "blue") {
+  const normalized = normalizeSpeechText(text);
   for (const [word, color] of colorWords) {
-    if (text.includes(word)) return color;
+    if (normalized.includes(word)) return color;
   }
   return fallback;
 }
 
 function shapeFromText(text) {
-  if (/圆|圈/.test(text)) return "circle";
-  if (/矩形|长方形|正方形|方块/.test(text)) return "rect";
-  if (/三角/.test(text)) return "triangle";
-  if (/箭头/.test(text)) return "arrow";
-  if (/线|横线|竖线/.test(text)) return "line";
+  const normalized = normalizeSpeechText(text);
+  if (/圆|圈/.test(normalized)) return "circle";
+  if (/矩形|长方形|正方形|方块|方形|举行|巨型/.test(normalized)) return "rect";
+  if (/三角/.test(normalized)) return "triangle";
+  if (/箭头|剪头/.test(normalized)) return "arrow";
+  if (/线|横线|竖线/.test(normalized)) return "line";
   return null;
 }
 
 function compositeFromText(text) {
-  if (/太阳/.test(text)) return "sun";
-  if (/云/.test(text)) return "cloud";
-  if (/树/.test(text)) return "tree";
-  if (/房子|房屋|小屋/.test(text)) return "house";
-  if (/花/.test(text)) return "flower";
-  if (/女孩|小女孩|女生/.test(text)) return "girl";
+  const normalized = normalizeSpeechText(text);
+  if (/太阳|太陽/.test(normalized)) return "sun";
+  if (/云|雲/.test(normalized)) return "cloud";
+  if (/树|樹/.test(normalized)) return "tree";
+  if (/房子|房屋|小屋/.test(normalized)) return "house";
+  if (/花朵|小花|鲜花|一朵花|两朵花|二朵花|三朵花|朵花/.test(normalized)) return "flower";
+  if (/女孩|小女孩|女生|女孩子/.test(normalized)) return "girl";
   return null;
 }
 
 function countFromText(text) {
+  const normalized = normalizeSpeechText(text);
   const cn = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5 };
-  const digit = text.match(/[1-5]/);
+  const digit = normalized.match(/[1-5]/);
   if (digit) return Number(digit[0]);
   for (const [word, value] of Object.entries(cn)) {
-    if (text.includes(word)) return value;
+    if (normalized.includes(word)) return value;
   }
   return 1;
 }
 
 function targetFromText(text) {
-  if (/刚才|上一个|它|这个/.test(text)) return "last_created";
-  if (/圆|圈/.test(text)) return "circle";
-  if (/矩形|方/.test(text)) return "rect";
-  if (/三角/.test(text)) return "triangle";
-  if (/太阳/.test(text)) return "sun";
-  if (/云/.test(text)) return "cloud";
-  if (/树/.test(text)) return "tree";
-  if (/房/.test(text)) return "house";
-  if (/女孩/.test(text)) return "girl";
+  const normalized = normalizeSpeechText(text);
+  if (/刚才|上一个|它|这个/.test(normalized)) return "last_created";
+  if (/圆|圈/.test(normalized)) return "circle";
+  if (/矩形|方/.test(normalized)) return "rect";
+  if (/三角/.test(normalized)) return "triangle";
+  if (/太阳/.test(normalized)) return "sun";
+  if (/云/.test(normalized)) return "cloud";
+  if (/树/.test(normalized)) return "tree";
+  if (/房/.test(normalized)) return "house";
+  if (/女孩/.test(normalized)) return "girl";
   return "last_created";
 }
 
 function relativePlacement(text) {
-  if (/右边|右侧/.test(text)) return "right";
-  if (/左边|左侧/.test(text)) return "left";
-  if (/上面|上方/.test(text)) return "top";
-  if (/下面|下方/.test(text)) return "bottom";
+  const normalized = normalizeSpeechText(text);
+  if (/右边/.test(normalized)) return "right";
+  if (/左边/.test(normalized)) return "left";
+  if (/上面/.test(normalized)) return "top";
+  if (/下面/.test(normalized)) return "bottom";
   return null;
 }
 
 function parseCommand(text) {
-  const normalized = text.replace(/\s+/g, "");
-  const lower = normalized.toLowerCase();
+  const normalized = normalizeSpeechText(text);
   const actions = [];
 
   if (/撤销|退回|上一步/.test(normalized)) {
@@ -288,9 +401,10 @@ function parseCommand(text) {
     return { actions: [{ type: "clear_canvas" }] };
   }
 
-  const segments = lower
+  const segments = String(text || "")
+    .toLowerCase()
     .split(/然后|再|并且|，|,|。|；|;/)
-    .map((part) => part.trim())
+    .map((part) => normalizeSpeechText(part))
     .filter(Boolean);
 
   for (const segment of segments) {
@@ -1013,8 +1127,11 @@ function updatePanels() {
 function handleSpeech(text) {
   const cleaned = text.trim();
   if (!cleaned) return;
-  transcriptText.textContent = cleaned;
-  setSpeechHint("已识别语音，正在执行绘图指令。");
+  const normalized = normalizeSpeechText(cleaned);
+  if (normalized === state.lastFinalText) return;
+  state.lastFinalText = normalized;
+  transcriptText.textContent = cleaned === normalized ? cleaned : `${cleaned} -> ${normalized}`;
+  setSpeechHint(cleaned === normalized ? "已识别语音，正在执行绘图指令。" : "已识别语音，并完成口令纠错。");
   const dsl = parseCommand(cleaned);
   executeDsl(dsl);
 }
@@ -1063,6 +1180,33 @@ function speechErrorMessage(error) {
   return map[error] || `语音识别错误：${error}`;
 }
 
+function shouldAutoRestart(error) {
+  return state.listening && !state.stopRequested && ["no-speech", "aborted"].includes(error);
+}
+
+function startRecognitionLoop() {
+  if (!state.recognition || state.recognitionActive) return;
+  clearRestartTimer();
+  try {
+    state.recognition.start();
+  } catch (error) {
+    const message = error?.name === "InvalidStateError"
+      ? "语音识别正在启动，请稍等。"
+      : `启动语音识别失败：${error?.message || error?.name || "未知错误"}`;
+    setSpeechHint(message, "error");
+    addLog(message, "error");
+  }
+}
+
+function scheduleRecognitionRestart(reason = "继续监听") {
+  if (!state.listening || state.stopRequested) return;
+  clearRestartTimer();
+  setSpeechHint(`${reason}，正在准备下一句。`);
+  state.restartTimer = window.setTimeout(() => {
+    startRecognitionLoop();
+  }, 420);
+}
+
 function setupSpeech() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
@@ -1075,12 +1219,13 @@ function setupSpeech() {
 
   const recognition = new SpeechRecognition();
   recognition.lang = "zh-CN";
-  recognition.continuous = true;
+  recognition.continuous = false;
   recognition.interimResults = true;
-  recognition.maxAlternatives = 3;
+  recognition.maxAlternatives = 5;
 
   recognition.onstart = () => {
-    setListening(true);
+    state.recognitionActive = true;
+    state.stopRequested = false;
     setSpeechHint("正在监听，请说出绘图指令。");
     startSilenceTimer();
   };
@@ -1089,11 +1234,15 @@ function setupSpeech() {
   };
   recognition.onsoundstart = () => {
     state.speechStarted = true;
+    clearSilenceTimer();
     setSpeechHint("听到声音了，正在判断是否为语音。");
+    startResultTimer();
   };
   recognition.onspeechstart = () => {
     state.speechStarted = true;
+    clearSilenceTimer();
     setSpeechHint("听到语音了，正在识别文字。");
+    startResultTimer();
   };
   recognition.onspeechend = () => {
     setSpeechHint("语音结束，等待识别结果。");
@@ -1103,8 +1252,14 @@ function setupSpeech() {
     addLog("听到声音但未识别出文字", "error");
   };
   recognition.onend = () => {
-    setListening(false);
-    if (state.micReady) {
+    state.recognitionActive = false;
+    clearSilenceTimer();
+    clearResultTimer();
+    if (state.listening && !state.stopRequested) {
+      scheduleRecognitionRestart("本句监听结束");
+      return;
+    }
+    if (state.micReady && !state.listening) {
       setSpeechHint("监听已暂停，点击麦克风可重新开始。");
     }
   };
@@ -1112,19 +1267,36 @@ function setupSpeech() {
     const message = speechErrorMessage(event.error);
     setSpeechHint(message, "error");
     addLog(message, "error");
+    state.recognitionActive = false;
+    clearSilenceTimer();
+    clearResultTimer();
+    if (shouldAutoRestart(event.error)) {
+      scheduleRecognitionRestart("没有识别到完整语音");
+      return;
+    }
     setListening(false);
   };
   recognition.onresult = (event) => {
     clearSilenceTimer();
+    clearResultTimer();
     let interim = "";
+    let finalText = "";
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const result = event.results[i];
-      const text = result[0].transcript;
+      const alternatives = Array.from(result).map((item) => item.transcript);
+      const best = pickBestTranscript(alternatives);
+      const text = best.raw || result[0].transcript;
       if (result.isFinal) {
-        handleSpeech(text);
+        finalText += text;
+        if (alternatives.length > 1) {
+          addLog(`候选择优：${best.normalized || text}`);
+        }
       } else {
         interim += text;
       }
+    }
+    if (finalText.trim()) {
+      handleSpeech(finalText);
     }
     if (interim) {
       transcriptText.textContent = interim;
@@ -1135,22 +1307,50 @@ function setupSpeech() {
   state.recognition = recognition;
 }
 
+function checkSpeechEnvironment() {
+  const host = window.location.hostname;
+  const userAgent = navigator.userAgent || "";
+  const isEdge = userAgent.includes("Edg/");
+  if (isEdge) {
+    setSpeechHint("检测到 Edge。Edge 的浏览器语音识别在当前环境不稳定，Demo 建议使用 Chrome 打开 http://localhost:5173。", "warning");
+    addLog("Edge 语音识别不稳定，建议使用 Chrome", "error");
+    return;
+  }
+
+  if (host === "::" || host === "0.0.0.0" || host === "[::]") {
+    setSpeechHint("当前地址可能影响浏览器语音识别。请手动打开 http://localhost:5173 后再点麦克风。", "warning");
+    addLog("建议使用 http://localhost:5173 进行语音识别", "error");
+    return;
+  }
+
+  if (!window.isSecureContext) {
+    setSpeechHint("当前页面不是安全上下文，浏览器可能禁止麦克风。请使用 http://localhost:5173。", "error");
+    addLog("当前页面不是安全上下文", "error");
+  }
+}
+
 listenButton.addEventListener("click", async () => {
   if (!state.recognition) return;
   if (state.listening) {
-    state.recognition.stop();
+    state.stopRequested = true;
+    setListening(false);
+    clearRestartTimer();
+    if (state.recognitionActive) {
+      try {
+        state.recognition.stop();
+      } catch (error) {
+        addLog("语音识别已停止");
+      }
+    } else {
+      setSpeechHint("监听已暂停，点击麦克风可重新开始。");
+    }
   } else {
     const canUseMic = await ensureMicAccess();
     if (!canUseMic) return;
-    try {
-      state.recognition.start();
-    } catch (error) {
-      const message = error?.name === "InvalidStateError"
-        ? "语音识别已经在运行。"
-        : `启动语音识别失败：${error?.message || error?.name || "未知错误"}`;
-      setSpeechHint(message, "error");
-      addLog(message, "error");
-    }
+    state.stopRequested = false;
+    setListening(true);
+    state.lastFinalText = "";
+    startRecognitionLoop();
   }
 });
 
@@ -1161,10 +1361,14 @@ setupSpeech();
 resizeCanvas();
 updatePanels();
 addLog("声绘板已就绪");
+checkSpeechEnvironment();
 
 window.__voiceDrawTest = {
   run: handleSpeech,
   parse: parseCommand,
+  normalize: normalizeSpeechText,
+  score: commandScore,
+  pick: pickBestTranscript,
   getState: () => ({
     objects: state.objects,
     actionTotal: state.actionTotal,
