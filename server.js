@@ -75,10 +75,10 @@ const commandSystemPrompt = `
 支持的 actions：
 - create_shape: shape 为 circle, rect, triangle, line, arrow, text
 - create_composite: object 为 sun, cloud, tree, house, flower, girl
-- update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas
+- update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas, set_grid
 
 支持的位置：
-center, left, right, top, bottom, top_left, top_right, bottom_left, bottom_right
+center, left, right, top, bottom, top_left, top_right, bottom_left, bottom_right, A1, B1, C1, A2, B2, C2, A3, B3, C3
 
 EXAMPLE INPUT:
 画一个小女孩站在房子旁边，天上有太阳和云，右边有一棵树

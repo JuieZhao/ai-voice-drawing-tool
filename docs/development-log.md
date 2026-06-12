@@ -46,7 +46,8 @@
 | 2026-06-12 | `docs/submission-compliance` | PR `#3` | 补齐提交规则、依赖、原创说明、Demo 占位和提交检查清单 |
 | 2026-06-12 | `feature/chrome-speech-recognition-stability` | PR `#4` | 增强 Chrome 语音识别候选选择、自动续听和 Edge 提示 |
 | 2026-06-12 | `feature/chrome-speech-recognition-stability` | PR `#5` | 抑制 SpeechRecognition network 错误后的自动重试刷屏 |
-| 2026-06-12 | `feature/deepseek-llm-parser` | 待创建 PR | 增加 DeepSeek 可选复杂口令解析和本地 DSL 过滤 |
+| 2026-06-12 | `feature/deepseek-llm-parser` | PR `#6` | 增加 DeepSeek 可选复杂口令解析、本地 DSL 过滤和连接状态显示 |
+| 2026-06-12 | `feature/composition-grid-codes` | PR `#7` | 增加 A1-C3 坐标格、坐标显示/隐藏和坐标定位口令 |
 
 所有已列 commit 均在本批次开始时间 2026-06-12 00:00 之后产生。
 
@@ -127,11 +128,10 @@ npm run check
 
 | PR | 分支建议 | 目标 | 验收标准 |
 | --- | --- | --- | --- |
-| PR 6 | `feature/deepseek-llm-parser` | DeepSeek 复杂口令解析 | 配置 Key 后复杂场景口令可拆成 DSL，未配置时回退本地规则 |
-| PR 7 | `polish/composite-templates` | 组合对象美术打磨 | 太阳、云、树、房子、小女孩风格更统一 |
-| PR 8 | `feature/scene-layout` | 复杂场景生成 | 一句话生成小场景并自动布局 |
-| PR 9 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
-| PR 10 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 视频链接完整 |
+| PR 8 | `polish/composite-templates` | 组合对象美术打磨 | 太阳、云、树、房子、小女孩风格更统一 |
+| PR 9 | `feature/scene-layout` | 复杂场景生成 | 一句话生成小场景并自动布局 |
+| PR 10 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
+| PR 11 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 视频链接完整 |
 
 ## 7. 每个 PR 的固定检查清单
 
