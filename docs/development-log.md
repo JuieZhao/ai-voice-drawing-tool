@@ -48,7 +48,7 @@
 | 2026-06-12 | `feature/chrome-speech-recognition-stability` | PR `#5` | 抑制 SpeechRecognition network 错误后的自动重试刷屏 |
 | 2026-06-12 | `feature/deepseek-llm-parser` | PR `#6` | 增加 DeepSeek 可选复杂口令解析、本地 DSL 过滤和连接状态显示 |
 | 2026-06-12 | `feature/composition-grid-codes` | PR `#7` | 增加 A1-C3 坐标格、坐标显示/隐藏和坐标定位口令 |
-| 2026-06-12 | `feature/turtle-drawing-planner` | PR `#8` | 增加绘制步骤面板、规划对象和海龟式画笔控制 |
+| 2026-06-12 | `feature/turtle-drawing-planner` | PR `#8` | 增加绘制步骤面板、规划对象、优化小猫构图，并增加海龟式路径辅助作画 |
 
 所有已列 commit 均在本批次开始时间 2026-06-12 00:00 之后产生。
 
@@ -184,6 +184,8 @@ http://localhost:5173
 画一个小女孩
 画一只小猫
 画一辆小汽车
+用画笔画一个正方形
+用画笔画一个三角形
 落笔
 向前走一百
 向右转九十度
