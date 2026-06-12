@@ -5,8 +5,9 @@
   "description": "A voice-first vector drawing tool for the XEngineer AI competition.",
   "type": "module",
   "scripts": {
-    "dev": "python -m http.server 5173",
-    "check": "node --check src/app.js"
+    "dev": "node server.js",
+    "static": "python -m http.server 5173",
+    "check": "node --check src/app.js && node --check server.js"
   },
   "keywords": [
     "voice",

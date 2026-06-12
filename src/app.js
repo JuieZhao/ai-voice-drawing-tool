@@ -59,6 +59,25 @@ const demoCommands = [
 
 const gridColumns = ["A", "B", "C"];
 const gridRows = ["1", "2", "3"];
+const gridCells = gridColumns.flatMap((column) => gridRows.map((row) => `${column}${row}`));
+const supportedShapes = ["circle", "rect", "triangle", "line", "arrow", "text"];
+const supportedComposites = ["sun", "cloud", "tree", "house", "flower", "girl"];
+const supportedTargets = ["last_created", ...supportedShapes, ...supportedComposites];
+const supportedPositions = ["center", "left", "right", "top", "bottom", "top_left", "top_right", "bottom_left", "bottom_right", ...gridCells];
+const supportedPlacements = ["left", "right", "top", "bottom"];
+const supportedActions = [
+  "create_shape",
+  "create_composite",
+  "update_object",
+  "resize_object",
+  "move_object",
+  "delete_object",
+  "undo",
+  "redo",
+  "clear_canvas",
+  "set_grid"
+];
+const llmComplexPattern = /和|同时|一起|旁边|站在|天上|天空|地上|背景|场景|右边有|左边有|上面有|下面有|前面|后面|附近|周围|然后|再|并且/;
 
 const state = {
   objects: [],
@@ -80,7 +99,10 @@ const state = {
   lastResultAt: 0,
   networkErrorCount: 0,
   lastNetworkErrorAt: 0,
-  compositionGridVisible: true
+  compositionGridVisible: true,
+  llmAvailable: null,
+  llmInFlight: false,
+  llmProvider: ""
 };
 
 function uid(prefix = "obj") {
@@ -555,6 +577,219 @@ function parseCommand(text) {
   return { actions };
 }
 
+function isExecutableDsl(dsl) {
+  return Array.isArray(dsl?.actions) && dsl.actions.length > 0;
+}
+
+function shouldUseLlm(text, localDsl) {
+  if (state.llmInFlight || state.llmAvailable === false) return false;
+  const normalized = normalizeSpeechText(text);
+  if (localDsl?.clarification) return true;
+  if (llmComplexPattern.test(normalized)) return true;
+  return isExecutableDsl(localDsl) && localDsl.actions.length >= 3;
+}
+
+function normalizeFill(value, fallback = palette.blue) {
+  if (!value) return fallback;
+  const text = String(value).trim();
+  if (/^#[0-9a-f]{6}$/i.test(text)) return text.toLowerCase();
+  if (palette[text]) return palette[text];
+  const color = colorFromText(text, "");
+  return color && palette[color] ? palette[color] : fallback;
+}
+
+function sanitizePosition(value) {
+  if (supportedPositions.includes(value)) return value;
+  if (typeof value === "object" && value !== null) {
+    const x = Number(value.x);
+    const y = Number(value.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      return { x: clamp(x, 0.05, 0.95), y: clamp(y, 0.05, 0.95) };
+    }
+  }
+  return null;
+}
+
+function sanitizeRelativeTo(relativeTo) {
+  if (!relativeTo || typeof relativeTo !== "object") return null;
+  const target = supportedTargets.includes(relativeTo.target) ? relativeTo.target : "last_created";
+  const placement = supportedPlacements.includes(relativeTo.placement) ? relativeTo.placement : "right";
+  return { target, placement };
+}
+
+function sanitizeAction(action) {
+  if (!action || typeof action !== "object" || !supportedActions.includes(action.type)) return null;
+
+  if (["undo", "redo", "clear_canvas"].includes(action.type)) {
+    return { type: action.type };
+  }
+
+  if (action.type === "set_grid") {
+    return { type: "set_grid", visible: action.visible !== false };
+  }
+
+  if (action.type === "create_shape") {
+    const shape = supportedShapes.includes(action.shape) ? action.shape : null;
+    if (!shape) return null;
+    const size = Number(action.size);
+    return {
+      type: "create_shape",
+      shape,
+      text: String(action.text || "").slice(0, 24),
+      fill: normalizeFill(action.fill, shape === "text" ? palette.black : palette.blue),
+      stroke: "#1f2937",
+      strokeWidth: 3,
+      position: sanitizePosition(action.position) || "center",
+      relativeTo: sanitizeRelativeTo(action.relativeTo),
+      size: Number.isFinite(size) ? clamp(size, 48, 260) : 120,
+      style: "cute_flat"
+    };
+  }
+
+  if (action.type === "create_composite") {
+    const object = supportedComposites.includes(action.object) ? action.object : null;
+    if (!object) return null;
+    const size = Number(action.size);
+    return {
+      type: "create_composite",
+      object,
+      fill: normalizeFill(action.fill, object === "tree" ? palette.green : palette.pink),
+      position: sanitizePosition(action.position) || defaultCompositePosition(object, 0, 1),
+      relativeTo: sanitizeRelativeTo(action.relativeTo),
+      size: Number.isFinite(size) ? clamp(size, 64, 280) : defaultCompositeSize(object)
+    };
+  }
+
+  if (action.type === "update_object") {
+    const target = supportedTargets.includes(action.target) ? action.target : "last_created";
+    const updates = {};
+    if (action.updates?.fill) updates.fill = normalizeFill(action.updates.fill, palette.yellow);
+    return Object.keys(updates).length ? { type: "update_object", target, updates } : null;
+  }
+
+  if (action.type === "resize_object") {
+    const target = supportedTargets.includes(action.target) ? action.target : "last_created";
+    const scale = Number(action.scale);
+    return {
+      type: "resize_object",
+      target,
+      scale: Number.isFinite(scale) ? clamp(scale, 0.55, 1.85) : 1.18
+    };
+  }
+
+  if (action.type === "move_object") {
+    const target = supportedTargets.includes(action.target) ? action.target : "last_created";
+    return {
+      type: "move_object",
+      target,
+      position: sanitizePosition(action.position) || "center"
+    };
+  }
+
+  if (action.type === "delete_object") {
+    const target = supportedTargets.includes(action.target) ? action.target : "last_created";
+    return { type: "delete_object", target };
+  }
+
+  return null;
+}
+
+function sanitizeDsl(dsl) {
+  if (!dsl || typeof dsl !== "object") {
+    return { clarification: "LLM 没有返回可执行指令，已降级到本地规则。" };
+  }
+
+  if (dsl.clarification && !Array.isArray(dsl.actions)) {
+    return { clarification: String(dsl.clarification).slice(0, 80) };
+  }
+
+  const actions = Array.isArray(dsl.actions)
+    ? dsl.actions.map(sanitizeAction).filter(Boolean)
+    : [];
+
+  if (!actions.length) {
+    return dsl.clarification
+      ? { clarification: String(dsl.clarification).slice(0, 80) }
+      : { clarification: "LLM 返回的动作不在当前画布能力范围内。" };
+  }
+
+  return {
+    source: dsl.source || "llm",
+    actions
+  };
+}
+
+function llmContext() {
+  return {
+    objectCount: state.objects.length,
+    lastObject: state.objects.find((object) => object.id === state.lastObjectId) || null,
+    objects: state.objects.map((object) => ({
+      id: object.id,
+      kind: object.kind,
+      shape: object.shape || null,
+      object: object.object || null,
+      label: object.label,
+      position: { x: Math.round(object.x), y: Math.round(object.y) }
+    })).slice(-12),
+    supportedShapes,
+    supportedComposites,
+    supportedPositions,
+    supportedActions
+  };
+}
+
+async function fetchLlmCommand(text) {
+  const response = await fetch("/api/llm-command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      context: llmContext()
+    })
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const error = new Error(body.message || body.error || `LLM request failed: ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
+async function parseCommandSmart(text) {
+  const localDsl = parseCommand(text);
+
+  if (!shouldUseLlm(text, localDsl)) {
+    return { ...localDsl, source: "local_rules" };
+  }
+
+  state.llmInFlight = true;
+  setSpeechHint("复杂口令正在交给 DeepSeek 拆解，稍等一下。");
+
+  try {
+    const result = await fetchLlmCommand(text);
+    state.llmAvailable = true;
+    state.llmProvider = result.provider || "DeepSeek";
+    const dsl = sanitizeDsl(result.dsl || result);
+    if (isExecutableDsl(dsl)) {
+      addLog(`${state.llmProvider} 已拆解复杂口令`);
+      return { ...dsl, source: "deepseek_llm" };
+    }
+    return dsl;
+  } catch (error) {
+    if (error.status === 404 || error.status === 503) {
+      state.llmAvailable = false;
+    }
+    addLog(`DeepSeek 解析不可用，已回退本地规则：${error.message}`, "error");
+    setSpeechHint("DeepSeek 解析暂不可用，已使用本地规则继续执行。", "warning");
+    return { ...localDsl, source: "local_rules_fallback" };
+  } finally {
+    state.llmInFlight = false;
+  }
+}
+
 function defaultShapePosition(index, total) {
   if (total === 1) return "center";
   const x = 0.38 + index * 0.18;
@@ -625,7 +860,13 @@ function executeDsl(dsl) {
   state.latestDsl = dsl;
   dslOutput.textContent = JSON.stringify(dsl, null, 2);
 
-  for (const action of dsl.actions) {
+  const actions = Array.isArray(dsl.actions) ? dsl.actions : [];
+  if (!actions.length) {
+    addLog("没有可执行的绘图动作", "error");
+    return;
+  }
+
+  for (const action of actions) {
     executeAction(action);
   }
 
@@ -1260,7 +1501,7 @@ function updatePanels() {
   });
 }
 
-function handleSpeech(text) {
+async function handleSpeech(text) {
   const cleaned = text.trim();
   if (!cleaned) return;
   const normalized = normalizeSpeechText(cleaned);
@@ -1268,8 +1509,26 @@ function handleSpeech(text) {
   state.lastFinalText = normalized;
   transcriptText.textContent = cleaned === normalized ? cleaned : `${cleaned} -> ${normalized}`;
   setSpeechHint(cleaned === normalized ? "已识别语音，正在执行绘图指令。" : "已识别语音，并完成口令纠错。");
-  const dsl = parseCommand(cleaned);
+  const dsl = await parseCommandSmart(cleaned);
   executeDsl(dsl);
+}
+
+async function checkLlmStatus() {
+  try {
+    const response = await fetch("/api/llm-status");
+    if (!response.ok) {
+      state.llmAvailable = false;
+      return;
+    }
+    const status = await response.json();
+    state.llmAvailable = Boolean(status.configured);
+    state.llmProvider = status.provider || "DeepSeek";
+    if (status.configured) {
+      addLog(`${state.llmProvider} 指令增强已连接：${status.model}`);
+    }
+  } catch (error) {
+    state.llmAvailable = false;
+  }
 }
 
 async function ensureMicAccess() {
@@ -1518,10 +1777,12 @@ resizeCanvas();
 updatePanels();
 addLog("声绘板已就绪");
 checkSpeechEnvironment();
+void checkLlmStatus();
 
 window.__voiceDrawTest = {
   run: handleSpeech,
   parse: parseCommand,
+  parseSmart: parseCommandSmart,
   normalize: normalizeSpeechText,
   score: commandScore,
   pick: pickBestTranscript,
