@@ -73,10 +73,14 @@ http://localhost:5173
 
 ```text
 .
+├─ favicon.svg
 ├─ index.html
 ├─ src/
 │  ├─ app.js
 │  └─ styles.css
+├─ docs/
+│  ├─ command-list.md
+│  └─ development-log.md
 ├─ README.md
 ├─ DESIGN.md
 └─ package.json
