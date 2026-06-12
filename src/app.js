@@ -69,7 +69,10 @@ const state = {
   restartTimer: null,
   speechStarted: false,
   stopRequested: false,
-  lastFinalText: ""
+  lastFinalText: "",
+  lastResultAt: 0,
+  networkErrorCount: 0,
+  lastNetworkErrorAt: 0
 };
 
 function uid(prefix = "obj") {
@@ -251,7 +254,7 @@ function startResultTimer() {
   clearResultTimer();
   state.resultTimer = window.setTimeout(() => {
     if (state.listening && state.speechStarted) {
-      setSpeechHint("已经听到声音，但还没有返回文字。请换用 http://localhost:5173，并确认 Chrome 语音识别服务网络可用。", "warning");
+      setSpeechHint("已经听到声音，但还没有返回文字。请稍等；如果随后出现网络错误，请重新点一次麦克风。", "warning");
       addLog("听到声音，但未返回文字", "error");
     }
   }, 9000);
@@ -1173,11 +1176,25 @@ function speechErrorMessage(error) {
     "no-speech": "没有检测到语音，请靠近麦克风再试。",
     "audio-capture": "没有检测到可用麦克风，请检查系统输入设备。",
     "not-allowed": "浏览器拒绝了麦克风权限，请重新允许。",
-    "network": "语音识别服务网络不可达。Chrome 的 SpeechRecognition 可能需要联网识别。",
+    "network": "Chrome 语音识别服务暂时断开，请稍等后重新点麦克风。",
     "language-not-supported": "当前语音识别不支持中文。",
     "language-unavailable": "当前中文语音识别服务不可用。"
   };
   return map[error] || `语音识别错误：${error}`;
+}
+
+function handleNetworkSpeechError() {
+  state.networkErrorCount += 1;
+  state.lastNetworkErrorAt = Date.now();
+  state.stopRequested = true;
+  state.recognitionActive = false;
+  clearSilenceTimer();
+  clearResultTimer();
+  clearRestartTimer();
+  setListening(false);
+  speechStatus.textContent = "需重启";
+  setSpeechHint("Chrome 语音识别服务刚刚断开。请等 1-2 秒后重新点麦克风继续，已避免自动重试刷屏。", "warning");
+  addLog("Chrome 语音服务断开，等待手动重启", "error");
 }
 
 function shouldAutoRestart(error) {
@@ -1204,7 +1221,7 @@ function scheduleRecognitionRestart(reason = "继续监听") {
   setSpeechHint(`${reason}，正在准备下一句。`);
   state.restartTimer = window.setTimeout(() => {
     startRecognitionLoop();
-  }, 420);
+  }, 900);
 }
 
 function setupSpeech() {
@@ -1270,6 +1287,10 @@ function setupSpeech() {
     state.recognitionActive = false;
     clearSilenceTimer();
     clearResultTimer();
+    if (event.error === "network") {
+      handleNetworkSpeechError();
+      return;
+    }
     if (shouldAutoRestart(event.error)) {
       scheduleRecognitionRestart("没有识别到完整语音");
       return;
@@ -1296,6 +1317,8 @@ function setupSpeech() {
       }
     }
     if (finalText.trim()) {
+      state.lastResultAt = Date.now();
+      state.networkErrorCount = 0;
       handleSpeech(finalText);
     }
     if (interim) {
