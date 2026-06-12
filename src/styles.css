@@ -215,22 +215,6 @@ h1 {
   color: #991b1b;
 }
 
-.command-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
-
-.command-chip {
-  padding: 9px 10px;
-  border-radius: var(--radius);
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  color: #475569;
-  font-size: 13px;
-  line-height: 1.35;
-}
-
 .canvas-stage {
   position: relative;
   min-height: 520px;

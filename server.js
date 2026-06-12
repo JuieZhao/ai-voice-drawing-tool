@@ -64,7 +64,7 @@ const commandSystemPrompt = `
 必须遵守：
 1. 只输出 json，不要输出解释、Markdown 或代码块。
 2. 输出格式只能是 {"actions":[...]}、{"plan":[...],"actions":[...]} 或 {"clarification":"..."}。
-3. 只能使用当前支持的动作、图形、组合对象、位置和 target。
+3. 只能使用当前支持的动作、基础图形、路径、位置和 target。
 4. 如果一句话包含多个对象或动作，请拆成 actions 数组。
 5. 遇到“它、刚才那个、旁边、右边、左边”等上下文，优先使用 target:"last_created" 和 relativeTo。
 6. 新建相互关联的场景时，先创建锚点对象，再让后续对象 relativeTo last_created。
@@ -72,12 +72,14 @@ const commandSystemPrompt = `
 8. size 使用 48 到 280 之间的数字。
 9. 如果无法映射到当前能力，返回简短 clarification。
 10. 用户要求“像海龟一样画、落笔、前进、转向、画笔颜色/粗细”时，使用 turtle actions。
-11. 用户要求画一个完整物体但没有现成组合对象时，先在 plan 里说明步骤，再拆成基础图形动作。
-12. create_shape 可以使用 width、height 和 strokeWidth 微调椭圆、扁圆、细线等部件。
+11. 不要输出贴图、图片、素材或组合模板。复杂对象也必须拆成基础笔画、路径和基础图形。
+12. draw_path 用于一笔一笔画：path 为 line、curve、circle，可设置 direction、distance、radius、anchor。
+13. create_shape 只用于必要的基础图形，不用于太阳、云、树、房子、小女孩等模板对象。
+14. 画布细网格是距离单位，1 格 = 34 像素。用户说“五格长”时优先输出 gridUnits:5，而不是 distance:5。
 
 支持的 actions：
+- draw_path: path 为 line, curve, circle；direction 为 left, right, up, down, forward；anchor 为 cursor, last_end, center, left, right, top, bottom；可用 gridUnits 表示直线/曲线长度，用 radiusGridUnits 表示圆半径
 - create_shape: shape 为 circle, rect, triangle, line, arrow, text
-- create_composite: object 为 sun, cloud, tree, house, flower, girl
 - update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas, set_grid
 - pen_down, pen_up, turtle_forward, turtle_turn, turtle_home, turtle_color, turtle_width
 
@@ -99,17 +101,15 @@ EXAMPLE JSON OUTPUT:
 }
 
 EXAMPLE INPUT:
-画一个小女孩站在房子旁边，天上有太阳和云，右边有一棵树
+向右画一条直线，接着向下画一条曲线，再在末端画一个圆
 
 EXAMPLE JSON OUTPUT:
 {
-  "plan": ["先画房子作为场景锚点", "把小女孩放在房子旁边", "在天空补太阳和云", "在右边补一棵树"],
+  "plan": ["向右画一条直线", "从上一笔末端向下画曲线", "在当前末端画圆"],
   "actions": [
-    {"type":"create_composite","object":"house","fill":"#fde68a","position":"bottom_left","size":190},
-    {"type":"create_composite","object":"girl","fill":"#f9a8d4","relativeTo":{"target":"last_created","placement":"right"},"size":190},
-    {"type":"create_composite","object":"sun","fill":"#facc15","position":"top_right","size":96},
-    {"type":"create_composite","object":"cloud","fill":"#f8fafc","position":"top","size":130},
-    {"type":"create_composite","object":"tree","fill":"#34d399","position":"bottom_right","size":170}
+    {"type":"draw_path","path":"line","direction":"right","gridUnits":4,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
+    {"type":"draw_path","path":"curve","direction":"down","distance":100,"anchor":"last_end","stroke":"#1f2937","strokeWidth":4},
+    {"type":"draw_path","path":"circle","radius":42,"anchor":"last_end","stroke":"#1f2937","strokeWidth":4}
   ]
 }
 `.trim();

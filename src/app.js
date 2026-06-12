@@ -9,7 +9,6 @@ const layerList = document.querySelector("#layerList");
 const dslOutput = document.querySelector("#dslOutput");
 const objectCount = document.querySelector("#objectCount");
 const actionCount = document.querySelector("#actionCount");
-const commandGrid = document.querySelector("#commandGrid");
 const planList = document.querySelector("#planList");
 
 const palette = {
@@ -43,39 +42,17 @@ const colorWords = [
   ["灰", "gray"]
 ];
 
-const demoCommands = [
-  "画一只小猫",
-  "画一辆小汽车",
-  "用画笔画一个正方形",
-  "用画笔画一个三角形",
-  "落笔",
-  "向前走一百",
-  "向右转九十度",
-  "换成红色",
-  "画一个蓝色圆形放在中间",
-  "把它移到右下角",
-  "隐藏网格",
-  "显示网格",
-  "在它右边画一个红色三角形",
-  "把圆形变大一点",
-  "在右上角画一个太阳",
-  "下面画一棵树",
-  "画一座房子",
-  "画两朵云",
-  "撤销上一步"
-];
-
+const gridUnit = 34;
 const gridColumns = ["A", "B", "C"];
 const gridRows = ["1", "2", "3"];
 const gridCells = gridColumns.flatMap((column) => gridRows.map((row) => `${column}${row}`));
 const supportedShapes = ["circle", "rect", "triangle", "line", "arrow", "text"];
-const supportedComposites = ["sun", "cloud", "tree", "house", "flower", "girl"];
-const supportedTargets = ["last_created", ...supportedShapes, ...supportedComposites];
+const supportedTargets = ["last_created", ...supportedShapes, "stroke"];
 const supportedPositions = ["center", "left", "right", "top", "bottom", "top_left", "top_right", "bottom_left", "bottom_right", ...gridCells];
 const supportedPlacements = ["left", "right", "top", "bottom"];
 const supportedActions = [
+  "draw_path",
   "create_shape",
-  "create_composite",
   "update_object",
   "resize_object",
   "move_object",
@@ -117,6 +94,7 @@ const state = {
   networkErrorCount: 0,
   lastNetworkErrorAt: 0,
   compositionGridVisible: true,
+  drawCursor: { active: false, x: 0.5, y: 0.5 },
   llmAvailable: null,
   llmInFlight: false,
   llmProvider: ""
@@ -128,6 +106,12 @@ function uid(prefix = "obj") {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function initialTurtle() {
@@ -191,12 +175,12 @@ function commandScore(text) {
   if (!normalized) return score;
   if (/画|写|放|在|把|改|变|移|撤销|重做|清空|删除/.test(normalized)) score += 2;
   if (shapeFromText(normalized)) score += 8;
-  if (compositeFromText(normalized)) score += 8;
+  if (pathKindFromText(normalized)) score += 8;
   if (hasColorWord(normalized)) score += 3;
   if (positionFromText(normalized)) score += 3;
   if (/变大|放大|变小|缩小|改成|换成|移动|移到|删除|撤销|重做|清空/.test(normalized)) score += 5;
   if (/右边|左边|上面|下面|中间|左上|右上|左下|右下/.test(normalized)) score += 3;
-  if (/圆|矩形|三角|线|箭头|太阳|云|树|房子|花朵|小女孩/.test(normalized)) score += 4;
+  if (/圆|矩形|三角|线|曲线|弧线|箭头/.test(normalized)) score += 4;
 
   return score;
 }
@@ -239,16 +223,6 @@ function pushHistory() {
     state.history.shift();
   }
   state.redo = [];
-}
-
-function setupCommands() {
-  commandGrid.innerHTML = "";
-  for (const command of demoCommands) {
-    const chip = document.createElement("div");
-    chip.className = "command-chip";
-    chip.textContent = command;
-    commandGrid.appendChild(chip);
-  }
 }
 
 function addLog(message, type = "info") {
@@ -442,14 +416,12 @@ function shapeFromText(text) {
   return null;
 }
 
-function compositeFromText(text) {
+function pathKindFromText(text) {
   const normalized = normalizeSpeechText(text);
-  if (/太阳|太陽/.test(normalized)) return "sun";
-  if (/云|雲/.test(normalized)) return "cloud";
-  if (/树|樹/.test(normalized)) return "tree";
-  if (/房子|房屋|小屋/.test(normalized)) return "house";
-  if (/花朵|小花|鲜花|一朵花|两朵花|二朵花|三朵花|朵花/.test(normalized)) return "flower";
-  if (/女孩|小女孩|女生|女孩子/.test(normalized)) return "girl";
+  if (/曲线|弧线|弯线|弯曲/.test(normalized)) return "curve";
+  if (/圆|圈/.test(normalized)) return "circle";
+  if (/直线|横线|竖线|线段|一条线|画线/.test(normalized)) return "line";
+  if (gridCountFromText(normalized) && /向|往|画/.test(normalized)) return "line";
   return null;
 }
 
@@ -496,17 +468,29 @@ function numberFromText(text, fallback = null) {
   return fallback;
 }
 
+function gridCountFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  const digitMatch = normalized.match(/(\d+)(?:个)?格/);
+  if (digitMatch) return Number(digitMatch[1]);
+
+  const cnMatch = normalized.match(/([一二两三四五六七八九十百]+)(?:个)?格/);
+  if (!cnMatch) return null;
+  const count = numberFromText(cnMatch[1], null);
+  return Number.isFinite(count) ? count : null;
+}
+
+function gridDistanceFromText(text) {
+  const count = gridCountFromText(text);
+  return Number.isFinite(count) ? count * gridUnit : null;
+}
+
 function targetFromText(text) {
   const normalized = normalizeSpeechText(text);
   if (/刚才|上一个|它|这个/.test(normalized)) return "last_created";
+  if (/线|笔画|路径|曲线|弧线/.test(normalized)) return "stroke";
   if (/圆|圈/.test(normalized)) return "circle";
   if (/矩形|方/.test(normalized)) return "rect";
   if (/三角/.test(normalized)) return "triangle";
-  if (/太阳/.test(normalized)) return "sun";
-  if (/云/.test(normalized)) return "cloud";
-  if (/树/.test(normalized)) return "tree";
-  if (/房/.test(normalized)) return "house";
-  if (/女孩/.test(normalized)) return "girl";
   return "last_created";
 }
 
@@ -521,37 +505,96 @@ function relativePlacement(text) {
 
 function plannedObjectFromText(text) {
   const normalized = normalizeSpeechText(text);
-  if (/猫|小猫|猫咪/.test(normalized)) return catPlan();
-  if (/汽车|小车|车子|轿车/.test(normalized)) return carPlan();
+  if (/猫|小猫|猫咪|汽车|小车|车子|轿车|太阳|云|树|房子|房屋|小屋|女孩|小女孩|花/.test(normalized)) {
+    return {
+      clarification: "现在先不使用模板。请用“画直线、画曲线、画圆、从上一笔继续”这样的步骤来描述。",
+      skipLlm: true
+    };
+  }
   return null;
 }
 
-function catPlan() {
-  const orange = "#fb923c";
-  return {
-    plan: [
-      "先画身体和尾巴，确定整体姿态",
-      "在身体上方画头部和两只耳朵",
-      "把眼睛、鼻子和胡须放回头部范围内",
-      "补上脚掌，让小猫更像坐着的姿态"
-    ],
-    actions: [
-      { type: "create_shape", shape: "circle", fill: "#fdba74", position: { x: 0.5, y: 0.58 }, width: 128, height: 150, label: "身体" },
-      { type: "create_shape", shape: "line", fill: orange, position: { x: 0.62, y: 0.54 }, size: 92, rotation: -48, strokeWidth: 7, label: "尾巴" },
-      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.45, y: 0.33 }, width: 46, height: 58, rotation: -18, label: "左耳" },
-      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.55, y: 0.33 }, width: 46, height: 58, rotation: 18, label: "右耳" },
-      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.5, y: 0.42 }, width: 118, height: 104, label: "小猫头部" },
-      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.47, y: 0.41 }, size: 13, label: "左眼" },
-      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.53, y: 0.41 }, size: 13, label: "右眼" },
-      { type: "create_shape", shape: "triangle", fill: palette.pink, position: { x: 0.5, y: 0.445 }, size: 16, rotation: 180, label: "鼻子" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.44, y: 0.45 }, size: 42, rotation: -10, strokeWidth: 2, label: "左胡须" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.44, y: 0.47 }, size: 42, rotation: 8, strokeWidth: 2, label: "左胡须" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.56, y: 0.45 }, size: 42, rotation: 10, strokeWidth: 2, label: "右胡须" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.56, y: 0.47 }, size: 42, rotation: -8, strokeWidth: 2, label: "右胡须" },
-      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.46, y: 0.68 }, width: 36, height: 24, label: "左脚" },
-      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.54, y: 0.68 }, width: 36, height: 24, label: "右脚" }
-    ]
+function pathCommandFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  if (/改成|变成|换成|变大|放大|变小|缩小|移动|移到|放到|挪到|删除|去掉|移除/.test(normalized)) {
+    return null;
+  }
+  const path = pathKindFromText(normalized);
+  if (!path) return null;
+  const gridCount = gridCountFromText(normalized);
+
+  const action = {
+    type: "draw_path",
+    path,
+    stroke: palette[colorFromText(normalized, "black")] || state.turtle.stroke,
+    strokeWidth: pathStrokeWidthFromText(normalized),
+    direction: directionFromText(normalized),
+    distance: path === "circle" ? null : pathDistanceFromText(normalized),
+    radius: path === "circle" ? pathRadiusFromText(normalized) : null,
+    gridUnits: path === "circle" ? null : gridCount,
+    radiusGridUnits: path === "circle" ? gridCount : null,
+    anchor: pathAnchorFromText(normalized, path),
+    position: path === "circle" ? positionFromText(normalized) : null,
+    target: targetFromText(normalized)
   };
+
+  return {
+    plan: [pathActionLabel(action)],
+    actions: [action]
+  };
+}
+
+function pathStrokeWidthFromText(text) {
+  if (/很粗/.test(text)) return Math.min(14, state.turtle.strokeWidth + 4);
+  if (/粗/.test(text)) return Math.min(14, state.turtle.strokeWidth + 2);
+  if (/很细/.test(text)) return Math.max(1, state.turtle.strokeWidth - 3);
+  if (/细/.test(text)) return Math.max(1, state.turtle.strokeWidth - 1);
+  return state.turtle.strokeWidth;
+}
+
+function pathDistanceFromText(text) {
+  const gridDistance = gridDistanceFromText(text);
+  if (Number.isFinite(gridDistance)) return gridDistance;
+  const fallback = /长/.test(text) ? 170 : /短/.test(text) ? 72 : 120;
+  return numberFromText(text, fallback);
+}
+
+function pathRadiusFromText(text) {
+  const gridDistance = gridDistanceFromText(text);
+  if (Number.isFinite(gridDistance)) return gridDistance;
+  const fallback = /大/.test(text) ? 72 : /小/.test(text) ? 38 : 54;
+  return numberFromText(text, fallback);
+}
+
+function directionFromText(text) {
+  if (/向左|往左|左边|左/.test(text)) return "left";
+  if (/向上|往上|上面|上/.test(text)) return "up";
+  if (/向下|往下|下面|下/.test(text)) return "down";
+  if (/竖线/.test(text)) return "down";
+  return "right";
+}
+
+function pathAnchorFromText(text, path) {
+  if (/从.*右边|它右边|圆右边|右侧/.test(text)) return "right";
+  if (/从.*左边|它左边|圆左边|左侧/.test(text)) return "left";
+  if (/从.*上面|它上面|圆上面|顶部/.test(text)) return "top";
+  if (/从.*下面|它下面|圆下面|底部/.test(text)) return "bottom";
+  if (/末端|终点|结尾|接着|继续|上一笔/.test(text)) return "last_end";
+  if (path === "circle" && /刚才|上一个|它|这个/.test(text)) return "center";
+  return "cursor";
+}
+
+function pathActionLabel(action) {
+  if (action.path === "circle" && action.radiusGridUnits) return `用画笔画半径 ${action.radiusGridUnits} 格的圆`;
+  if (action.gridUnits) return `从上下文位置向${directionLabel(action.direction)}画 ${action.gridUnits} 格${action.path === "curve" ? "曲线" : "直线"}`;
+  if (action.path === "circle") return `用画笔画半径 ${action.radius} 的圆`;
+  if (action.path === "curve") return `从上下文位置向${directionLabel(action.direction)}画一条曲线`;
+  return `从上下文位置向${directionLabel(action.direction)}画一条直线`;
+}
+
+function directionLabel(direction) {
+  const labels = { left: "左", right: "右", up: "上", down: "下" };
+  return labels[direction] || "右";
 }
 
 function turtlePathFromText(text) {
@@ -587,25 +630,6 @@ function turtlePathFromText(text) {
     ]);
   }
 
-  if (/房子|小屋/.test(normalized)) {
-    return turtlePathPlan("用画笔画房子轮廓", [
-      { type: "turtle_home" },
-      { type: "pen_down" },
-      { type: "turtle_forward", distance: 120 },
-      { type: "turtle_turn", angle: 90 },
-      { type: "turtle_forward", distance: 90 },
-      { type: "turtle_turn", angle: 135 },
-      { type: "turtle_forward", distance: 85 },
-      { type: "turtle_turn", angle: 90 },
-      { type: "turtle_forward", distance: 85 },
-      { type: "turtle_turn", angle: 135 },
-      { type: "turtle_forward", distance: 90 },
-      { type: "turtle_turn", angle: 90 },
-      { type: "turtle_forward", distance: 120 },
-      { type: "pen_up" }
-    ]);
-  }
-
   return null;
 }
 
@@ -621,37 +645,17 @@ function turtleActionLabel(action) {
   if (action.type === "turtle_home") return "画笔回到中心，准备开始";
   if (action.type === "pen_down") return "落笔，开始留下线条";
   if (action.type === "pen_up") return "抬笔，结束这段路径";
+  if (action.type === "turtle_forward" && action.gridUnits) return `${action.distance >= 0 ? "前进" : "后退"} ${Math.abs(action.gridUnits)} 格`;
   if (action.type === "turtle_forward") return `${action.distance >= 0 ? "前进" : "后退"} ${Math.abs(action.distance)} 像素`;
   if (action.type === "turtle_turn") return `${action.angle >= 0 ? "右转" : "左转"} ${Math.abs(action.angle)} 度`;
   return "执行画笔动作";
-}
-
-function carPlan() {
-  return {
-    plan: [
-      "画一个圆角矩形作为车身",
-      "在车身上方画车窗",
-      "画两个轮子",
-      "补上车灯和地面线"
-    ],
-    actions: [
-      { type: "create_shape", shape: "rect", fill: palette.blue, position: { x: 0.5, y: 0.55 }, size: 150, label: "车身" },
-      { type: "create_shape", shape: "rect", fill: "#bfdbfe", position: { x: 0.5, y: 0.45 }, size: 76, label: "车窗" },
-      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.42, y: 0.63 }, size: 38, label: "左轮" },
-      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.58, y: 0.63 }, size: 38, label: "右轮" },
-      { type: "create_shape", shape: "circle", fill: "#f8fafc", position: { x: 0.42, y: 0.63 }, size: 16, label: "轮毂" },
-      { type: "create_shape", shape: "circle", fill: "#f8fafc", position: { x: 0.58, y: 0.63 }, size: 16, label: "轮毂" },
-      { type: "create_shape", shape: "circle", fill: palette.yellow, position: { x: 0.64, y: 0.54 }, size: 18, label: "车灯" },
-      { type: "create_shape", shape: "line", fill: palette.gray, position: { x: 0.5, y: 0.7 }, size: 180, label: "地面线" }
-    ]
-  };
 }
 
 function turtleCommandFromText(text) {
   const normalized = normalizeSpeechText(text);
   const pathPlan = turtlePathFromText(normalized);
   if (pathPlan) return pathPlan;
-  const mentionsDrawableTarget = /圆|矩形|方形|方块|三角|线|箭头|太阳|云|树|房|女孩|猫|汽车|小车|车子/.test(normalized);
+  const mentionsDrawableTarget = /圆|矩形|方形|方块|三角|线|曲线|弧线|箭头/.test(normalized);
 
   if (/落笔|下笔|开始画/.test(normalized)) return { actions: [{ type: "pen_down" }], plan: ["落下画笔，后续移动会留下线条"] };
   if (/抬笔|提笔|停止画/.test(normalized)) return { actions: [{ type: "pen_up" }], plan: ["抬起画笔，后续移动只改变画笔位置"] };
@@ -666,12 +670,20 @@ function turtleCommandFromText(text) {
     return { actions: [{ type: "turtle_turn", angle }], plan: [`向右转 ${angle} 度`] };
   }
   if (/向后|后退|倒退/.test(normalized)) {
-    const distance = numberFromText(normalized, 80);
-    return { actions: [{ type: "turtle_forward", distance: -distance }], plan: [`向后退 ${distance} 像素`] };
+    const gridCount = gridCountFromText(normalized);
+    const distance = gridDistanceFromText(normalized) || numberFromText(normalized, 80);
+    return {
+      actions: [{ type: "turtle_forward", distance: -distance, gridUnits: gridCount }],
+      plan: [gridCount ? `向后退 ${gridCount} 格` : `向后退 ${distance} 像素`]
+    };
   }
   if (/向前|前进|往前|走/.test(normalized)) {
-    const distance = numberFromText(normalized, 80);
-    return { actions: [{ type: "turtle_forward", distance }], plan: [`向前走 ${distance} 像素`] };
+    const gridCount = gridCountFromText(normalized);
+    const distance = gridDistanceFromText(normalized) || numberFromText(normalized, 80);
+    return {
+      actions: [{ type: "turtle_forward", distance, gridUnits: gridCount }],
+      plan: [gridCount ? `向前走 ${gridCount} 格` : `向前走 ${distance} 像素`]
+    };
   }
   if (/换成|改成|颜色/.test(normalized) && hasColorWord(normalized) && (/画笔|线条|笔|海龟/.test(normalized) || !mentionsDrawableTarget)) {
     const color = palette[colorFromText(normalized, "black")];
@@ -708,6 +720,9 @@ function parseCommand(text) {
 
   const turtleCommand = turtleCommandFromText(normalized);
   if (turtleCommand) return turtleCommand;
+
+  const pathCommand = pathCommandFromText(normalized);
+  if (pathCommand) return pathCommand;
 
   const plannedObject = plannedObjectFromText(normalized);
   if (plannedObject) return plannedObject;
@@ -767,26 +782,11 @@ function parseCommand(text) {
       continue;
     }
 
-    const composite = compositeFromText(segment);
     const shape = shapeFromText(segment);
     const count = countFromText(segment);
     const position = positionFromText(segment);
     const placement = relativePlacement(segment);
-    const fill = palette[colorFromText(segment, composite === "tree" ? "green" : "blue")];
-
-    if (composite) {
-      for (let i = 0; i < count; i += 1) {
-        actions.push({
-          type: "create_composite",
-          object: composite,
-          fill,
-          position: position || defaultCompositePosition(composite, i, count),
-          relativeTo: !position && placement ? { target: "last_created", placement } : null,
-          size: sizeFromText(segment, defaultCompositeSize(composite))
-        });
-      }
-      continue;
-    }
+    const fill = palette[colorFromText(segment, "blue")];
 
     if (shape) {
       for (let i = 0; i < count; i += 1) {
@@ -807,7 +807,7 @@ function parseCommand(text) {
 
   if (!actions.length) {
     return {
-      clarification: "我可以先画基础图形、太阳、云、树、房子、花和小女孩。"
+      clarification: "我现在先支持一笔一笔画：直线、曲线、圆、画笔移动、颜色和线宽。"
     };
   }
 
@@ -820,6 +820,7 @@ function isExecutableDsl(dsl) {
 
 function shouldUseLlm(text, localDsl) {
   if (state.llmInFlight || state.llmAvailable === false) return false;
+  if (localDsl?.skipLlm) return false;
   if (Array.isArray(localDsl?.plan) && localDsl.plan.length) return false;
   const normalized = normalizeSpeechText(text);
   if (localDsl?.clarification) return true;
@@ -867,10 +868,13 @@ function sanitizeAction(action) {
   }
 
   if (action.type === "turtle_forward") {
+    const gridUnits = Number(action.gridUnits);
     const distance = Number(action.distance);
+    const resolvedDistance = Number.isFinite(gridUnits) ? gridUnits * gridUnit : distance;
     return {
       type: "turtle_forward",
-      distance: Number.isFinite(distance) ? clamp(distance, -260, 260) : 80
+      distance: Number.isFinite(resolvedDistance) ? clamp(resolvedDistance, -260, 260) : 80,
+      gridUnits: Number.isFinite(gridUnits) ? clamp(gridUnits, -20, 20) : null
     };
   }
 
@@ -901,6 +905,35 @@ function sanitizeAction(action) {
     return { type: "set_grid", visible: action.visible !== false };
   }
 
+  if (action.type === "draw_path") {
+    const path = ["line", "curve", "circle"].includes(action.path) ? action.path : "line";
+    const gridUnits = Number(action.gridUnits);
+    const radiusGridUnits = Number(action.radiusGridUnits);
+    const distance = Number(action.distance);
+    const radius = Number(action.radius);
+    const strokeWidth = Number(action.strokeWidth);
+    const anchor = ["cursor", "last_end", "center", "left", "right", "top", "bottom"].includes(action.anchor)
+      ? action.anchor
+      : "cursor";
+    const direction = ["left", "right", "up", "down", "forward"].includes(action.direction)
+      ? action.direction
+      : "right";
+    return {
+      type: "draw_path",
+      path,
+      stroke: normalizeFill(action.stroke || action.fill, state.turtle.stroke),
+      strokeWidth: Number.isFinite(strokeWidth) ? clamp(strokeWidth, 1, 14) : state.turtle.strokeWidth,
+      distance: Number.isFinite(gridUnits) ? clamp(gridUnits * gridUnit, 12, 320) : Number.isFinite(distance) ? clamp(distance, 12, 320) : 120,
+      radius: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits * gridUnit, 8, 150) : Number.isFinite(radius) ? clamp(radius, 8, 150) : 54,
+      gridUnits: Number.isFinite(gridUnits) ? clamp(gridUnits, 1, 20) : null,
+      radiusGridUnits: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits, 1, 10) : null,
+      direction,
+      anchor,
+      target: supportedTargets.includes(action.target) ? action.target : "last_created",
+      position: sanitizePosition(action.position)
+    };
+  }
+
   if (action.type === "create_shape") {
     const shape = supportedShapes.includes(action.shape) ? action.shape : null;
     if (!shape) return null;
@@ -921,20 +954,6 @@ function sanitizeAction(action) {
       rotation: Number.isFinite(Number(action.rotation)) ? clamp(Number(action.rotation), -360, 360) : 0,
       label: String(action.label || "").slice(0, 20),
       style: "cute_flat"
-    };
-  }
-
-  if (action.type === "create_composite") {
-    const object = supportedComposites.includes(action.object) ? action.object : null;
-    if (!object) return null;
-    const size = Number(action.size);
-    return {
-      type: "create_composite",
-      object,
-      fill: normalizeFill(action.fill, object === "tree" ? palette.green : palette.pink),
-      position: sanitizePosition(action.position) || defaultCompositePosition(object, 0, 1),
-      relativeTo: sanitizeRelativeTo(action.relativeTo),
-      size: Number.isFinite(size) ? clamp(size, 64, 280) : defaultCompositeSize(object)
     };
   }
 
@@ -1008,12 +1027,10 @@ function llmContext() {
       id: object.id,
       kind: object.kind,
       shape: object.shape || null,
-      object: object.object || null,
       label: object.label,
       position: { x: Math.round(object.x), y: Math.round(object.y) }
     })).slice(-12),
     supportedShapes,
-    supportedComposites,
     supportedPositions,
     supportedActions
   };
@@ -1077,30 +1094,6 @@ function defaultShapePosition(index, total) {
   return { x, y: 0.52 };
 }
 
-function defaultCompositePosition(type, index, total) {
-  const defaults = {
-    sun: "top_right",
-    cloud: { x: 0.34 + index * 0.22, y: 0.22 },
-    tree: "bottom_right",
-    house: "bottom_left",
-    flower: { x: 0.36 + index * 0.12, y: 0.78 },
-    girl: "bottom"
-  };
-  return defaults[type] || defaultShapePosition(index, total);
-}
-
-function defaultCompositeSize(type) {
-  const defaults = {
-    sun: 96,
-    cloud: 130,
-    tree: 170,
-    house: 190,
-    flower: 120,
-    girl: 190
-  };
-  return defaults[type] || 140;
-}
-
 function resolveTarget(target) {
   if (!state.objects.length) return null;
   if (target === "last_created") {
@@ -1132,7 +1125,7 @@ function resolveRelative(relativeTo, size) {
   };
 }
 
-function executeDsl(dsl) {
+async function executeDsl(dsl) {
   if (dsl.clarification) {
     addLog(dsl.clarification, "error");
     return;
@@ -1148,12 +1141,85 @@ function executeDsl(dsl) {
     return;
   }
 
-  for (const action of actions) {
-    executeAction(action);
-  }
+  const shouldAnimate = shouldAnimateDrawing(dsl);
+  state.drawCursor.active = shouldAnimate;
 
-  updatePanels();
-  draw();
+  try {
+    for (const action of actions) {
+      if (shouldAnimate) {
+        await moveDrawingCursorToAction(action);
+      }
+      if (action.type === "draw_path") {
+        await executeAnimatedPathAction(action);
+      } else {
+        executeAction(action);
+      }
+      updatePanels();
+      draw();
+      if (shouldAnimate) {
+        await wait(90);
+      }
+    }
+
+    if (shouldAnimate) {
+      await wait(160);
+    }
+  } finally {
+    if (shouldAnimate) {
+      state.drawCursor.active = false;
+      draw();
+    }
+  }
+}
+
+function shouldAnimateDrawing(dsl) {
+  const actions = Array.isArray(dsl.actions) ? dsl.actions : [];
+  if (actions.length < 2) return false;
+  if (!Array.isArray(dsl.plan) || !dsl.plan.length) return false;
+  return actions.some((action) => action.type === "draw_path" || action.type === "create_shape");
+}
+
+async function moveDrawingCursorToAction(action) {
+  const point = actionPreviewPoint(action);
+  if (!point) return;
+
+  const from = { x: state.drawCursor.x, y: state.drawCursor.y };
+  const startedAt = performance.now();
+  const duration = 180;
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const progress = clamp((now - startedAt) / duration, 0, 1);
+      const eased = 1 - (1 - progress) ** 3;
+      state.drawCursor.x = from.x + (point.x - from.x) * eased;
+      state.drawCursor.y = from.y + (point.y - from.y) * eased;
+      draw();
+      if (progress < 1) {
+        window.requestAnimationFrame(frame);
+      } else {
+        resolve();
+      }
+    }
+    window.requestAnimationFrame(frame);
+  });
+}
+
+function actionPreviewPoint(action) {
+  if (action.type === "draw_path") {
+    return normalizedPathPreviewPoint(action);
+  }
+  if (action.type !== "create_shape") return null;
+  const base = typeof action.size === "number" ? action.size : 120;
+  const width = typeof action.width === "number" ? action.width : base;
+  const height = typeof action.height === "number" ? action.height : base;
+  const point = action.relativeTo
+    ? resolveRelative(action.relativeTo, base)
+    : toPoint(action.position || "center", { width, height });
+  const { width: canvasWidth, height: canvasHeight } = canvasSize();
+  return {
+    x: clamp(point.x / Math.max(1, canvasWidth), 0.03, 0.97),
+    y: clamp(point.y / Math.max(1, canvasHeight), 0.03, 0.97)
+  };
 }
 
 function executeAction(action) {
@@ -1199,10 +1265,10 @@ function executeAction(action) {
 
   pushHistory();
 
-  if (action.type === "create_shape") {
+  if (action.type === "draw_path") {
+    createPathStroke(action);
+  } else if (action.type === "create_shape") {
     createShape(action);
-  } else if (action.type === "create_composite") {
-    createComposite(action);
   } else if (action.type === "update_object") {
     updateObject(action);
   } else if (action.type === "resize_object") {
@@ -1266,26 +1332,254 @@ function executeTurtleAction(action) {
     };
 
     if (state.turtle.penDown) {
-      const object = {
-        id: uid("stroke"),
-        kind: "stroke",
+      addStrokeObject([from, to], {
         label: "画笔线条",
-        x: 0,
-        y: 0,
-        w: 0,
-        h: 0,
-        points: [from, to],
         stroke: state.turtle.stroke,
         strokeWidth: state.turtle.strokeWidth
-      };
-      state.objects.push(object);
-      state.lastObjectId = object.id;
+      });
     }
 
     state.turtle.x = to.x;
     state.turtle.y = to.y;
     addLog(`${distance >= 0 ? "前进" : "后退"}${Math.abs(distance)}像素`);
   }
+}
+
+async function executeAnimatedPathAction(action) {
+  pushHistory();
+  const draft = buildPathStroke(action);
+  const object = addStrokeObject([draft.points[0]], draft.options);
+  object.closed = false;
+
+  for (let i = 1; i < draft.points.length; i += 1) {
+    updateStrokePoints(object, draft.points.slice(0, i + 1), draft.closed && i === draft.points.length - 1);
+    const tip = object.points.at(-1);
+    state.turtle.x = tip.x;
+    state.turtle.y = tip.y;
+    updatePanels();
+    draw();
+    await wait(draft.delay);
+  }
+
+  state.actionTotal += 1;
+  addLog(draft.log);
+}
+
+function createPathStroke(action) {
+  const draft = buildPathStroke(action);
+  addStrokeObject(draft.points, { ...draft.options, closed: draft.closed });
+  const tip = draft.points.at(-1);
+  state.turtle.x = tip.x;
+  state.turtle.y = tip.y;
+  addLog(draft.log);
+}
+
+function buildPathStroke(action) {
+  const { width, height } = canvasSize();
+  const stroke = action.stroke || state.turtle.stroke;
+  const strokeWidth = action.strokeWidth || state.turtle.strokeWidth;
+
+  if (action.path === "circle") {
+    const center = resolvePathAnchor(action, "center");
+    const radius = clamp(action.radius || 54, 8, Math.min(width, height) * 0.28);
+    const points = [];
+    for (let i = 0; i <= 48; i += 1) {
+      const angle = (Math.PI * 2 * i) / 48;
+      points.push(normalizeCanvasPoint({
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius
+      }));
+    }
+    return {
+      points,
+      options: { label: "手绘圆", stroke, strokeWidth },
+      closed: true,
+      delay: 10,
+      log: "画一个圆"
+    };
+  }
+
+  const start = resolvePathAnchor(action, "start");
+  const end = pathEndPoint(start, action);
+  const points = action.path === "curve"
+    ? curvePoints(start, end, action)
+    : linePoints(start, end);
+
+  return {
+    points,
+    options: {
+      label: action.path === "curve" ? "手绘曲线" : "手绘直线",
+      stroke,
+      strokeWidth
+    },
+    closed: false,
+    delay: action.path === "curve" ? 12 : 14,
+    log: action.path === "curve" ? "画一条曲线" : "画一条直线"
+  };
+}
+
+function addStrokeObject(points, options = {}) {
+  const boundedPoints = points.map((point) => ({
+    x: clamp(point.x, 0.02, 0.98),
+    y: clamp(point.y, 0.02, 0.98)
+  }));
+  const bounds = strokeBounds(boundedPoints);
+  const object = {
+    id: uid("stroke"),
+    kind: "stroke",
+    shape: "stroke",
+    label: options.label || "笔画",
+    x: bounds.x,
+    y: bounds.y,
+    w: bounds.w,
+    h: bounds.h,
+    points: boundedPoints,
+    closed: Boolean(options.closed),
+    stroke: options.stroke || state.turtle.stroke,
+    strokeWidth: options.strokeWidth || state.turtle.strokeWidth
+  };
+  state.objects.push(object);
+  state.lastObjectId = object.id;
+  return object;
+}
+
+function updateStrokePoints(object, points, closed = object.closed) {
+  object.points = points.map((point) => ({
+    x: clamp(point.x, 0.02, 0.98),
+    y: clamp(point.y, 0.02, 0.98)
+  }));
+  object.closed = Boolean(closed);
+  const bounds = strokeBounds(object.points);
+  object.x = bounds.x;
+  object.y = bounds.y;
+  object.w = bounds.w;
+  object.h = bounds.h;
+}
+
+function strokeBounds(points) {
+  const { width, height } = canvasSize();
+  const xs = points.map((point) => point.x * width);
+  const ys = points.map((point) => point.y * height);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return {
+    x: (minX + maxX) / 2,
+    y: (minY + maxY) / 2,
+    w: Math.max(1, maxX - minX),
+    h: Math.max(1, maxY - minY)
+  };
+}
+
+function normalizeCanvasPoint(point) {
+  const { width, height } = canvasSize();
+  return {
+    x: clamp(point.x / Math.max(1, width), 0.02, 0.98),
+    y: clamp(point.y / Math.max(1, height), 0.02, 0.98)
+  };
+}
+
+function denormalizeCanvasPoint(point) {
+  const { width, height } = canvasSize();
+  return {
+    x: point.x * width,
+    y: point.y * height
+  };
+}
+
+function resolvePathAnchor(action, usage) {
+  const { width, height } = canvasSize();
+  if (usage === "center" && action.position) {
+    return toPoint(action.position, { width: (action.radius || 54) * 2, height: (action.radius || 54) * 2 });
+  }
+
+  const target = resolveTarget(action.target || "last_created");
+  const anchor = action.anchor || "cursor";
+  if (target && anchor !== "cursor") {
+    return targetAnchorPoint(target, anchor);
+  }
+
+  return {
+    x: clamp(state.turtle.x * width, 20, width - 20),
+    y: clamp(state.turtle.y * height, 20, height - 20)
+  };
+}
+
+function targetAnchorPoint(target, anchor) {
+  const halfW = Math.max(1, target.w || 1) / 2;
+  const halfH = Math.max(1, target.h || 1) / 2;
+  const anchors = {
+    center: { x: target.x, y: target.y },
+    left: { x: target.x - halfW, y: target.y },
+    right: { x: target.x + halfW, y: target.y },
+    top: { x: target.x, y: target.y - halfH },
+    bottom: { x: target.x, y: target.y + halfH }
+  };
+  if (anchor === "last_end" && target.kind === "stroke" && target.points?.length) {
+    return denormalizeCanvasPoint(target.points.at(-1));
+  }
+  return anchors[anchor] || anchors.center;
+}
+
+function pathEndPoint(start, action) {
+  const { width, height } = canvasSize();
+  const distance = action.distance || 120;
+  const vectors = {
+    left: [-1, 0],
+    right: [1, 0],
+    up: [0, -1],
+    down: [0, 1],
+    forward: [Math.cos((state.turtle.angle * Math.PI) / 180), Math.sin((state.turtle.angle * Math.PI) / 180)]
+  };
+  const [dx, dy] = vectors[action.direction] || vectors.right;
+  return {
+    x: clamp(start.x + dx * distance, 20, width - 20),
+    y: clamp(start.y + dy * distance, 20, height - 20)
+  };
+}
+
+function linePoints(start, end) {
+  const points = [];
+  for (let i = 0; i <= 16; i += 1) {
+    const t = i / 16;
+    points.push(normalizeCanvasPoint({
+      x: start.x + (end.x - start.x) * t,
+      y: start.y + (end.y - start.y) * t
+    }));
+  }
+  return points;
+}
+
+function curvePoints(start, end, action) {
+  const direction = action.direction || "right";
+  const distance = Math.max(24, action.distance || 120);
+  const bend = Math.min(90, Math.max(28, distance * 0.42));
+  const perpendicular = direction === "left" || direction === "right"
+    ? { x: 0, y: -bend }
+    : { x: bend, y: 0 };
+  const control = {
+    x: (start.x + end.x) / 2 + perpendicular.x,
+    y: (start.y + end.y) / 2 + perpendicular.y
+  };
+  const points = [];
+  for (let i = 0; i <= 24; i += 1) {
+    const t = i / 24;
+    const inv = 1 - t;
+    points.push(normalizeCanvasPoint({
+      x: inv * inv * start.x + 2 * inv * t * control.x + t * t * end.x,
+      y: inv * inv * start.y + 2 * inv * t * control.y + t * t * end.y
+    }));
+  }
+  return points;
+}
+
+function normalizedPathPreviewPoint(action) {
+  if (action.path === "circle") {
+    return normalizeCanvasPoint(resolvePathAnchor(action, "center"));
+  }
+  const start = resolvePathAnchor(action, "start");
+  return normalizeCanvasPoint(pathEndPoint(start, action));
 }
 
 function createShape(action) {
@@ -1317,36 +1611,17 @@ function createShape(action) {
   addLog(`创建${displayObjectLabel(object)}`);
 }
 
-function createComposite(action) {
-  const base = typeof action.size === "number" ? action.size : defaultCompositeSize(action.object);
-  const point = action.relativeTo
-    ? resolveRelative(action.relativeTo, base)
-    : toPoint(action.position || defaultCompositePosition(action.object, 0, 1), { width: base, height: base });
-  const object = {
-    id: uid(action.object),
-    kind: "composite",
-    object: action.object,
-    label: compositeLabel(action.object),
-    x: point.x,
-    y: point.y,
-    w: compositeWidth(action.object, base),
-    h: compositeHeight(action.object, base),
-    fill: action.fill || palette.green,
-    stroke: "#1f2937",
-    strokeWidth: 3
-  };
-  state.objects.push(object);
-  state.lastObjectId = object.id;
-  addLog(`创建${object.label}`);
-}
-
 function updateObject(action) {
   const target = resolveTarget(action.target);
   if (!target) {
     addLog("没有可修改对象", "error");
     return;
   }
-  Object.assign(target, action.updates);
+  if (target.kind === "stroke" && action.updates.fill) {
+    target.stroke = action.updates.fill;
+  } else {
+    Object.assign(target, action.updates);
+  }
   state.lastObjectId = target.id;
   addLog(`修改${target.label}`);
 }
@@ -1355,6 +1630,12 @@ function resizeObject(action) {
   const target = resolveTarget(action.target);
   if (!target) {
     addLog("没有可缩放对象", "error");
+    return;
+  }
+  if (target.kind === "stroke") {
+    scaleStroke(target, action.scale);
+    state.lastObjectId = target.id;
+    addLog(`${action.scale > 1 ? "放大" : "缩小"}${target.label}`);
     return;
   }
   target.w *= action.scale;
@@ -1370,10 +1651,48 @@ function moveObject(action) {
     return;
   }
   const point = toPoint(action.position || "center", { width: target.w, height: target.h });
+  if (target.kind === "stroke") {
+    moveStroke(target, point);
+    state.lastObjectId = target.id;
+    addLog(`移动${target.label}`);
+    return;
+  }
   target.x = point.x;
   target.y = point.y;
   state.lastObjectId = target.id;
   addLog(`移动${target.label}`);
+}
+
+function scaleStroke(object, scale) {
+  const { width, height } = canvasSize();
+  const center = { x: object.x, y: object.y };
+  object.points = object.points.map((point) => {
+    const pixel = denormalizeCanvasPoint(point);
+    return normalizeCanvasPoint({
+      x: center.x + (pixel.x - center.x) * scale,
+      y: center.y + (pixel.y - center.y) * scale
+    });
+  });
+  const bounds = strokeBounds(object.points);
+  object.x = clamp(bounds.x, 0, width);
+  object.y = clamp(bounds.y, 0, height);
+  object.w = bounds.w;
+  object.h = bounds.h;
+}
+
+function moveStroke(object, point) {
+  const { width, height } = canvasSize();
+  const dx = (point.x - object.x) / Math.max(1, width);
+  const dy = (point.y - object.y) / Math.max(1, height);
+  object.points = object.points.map((current) => ({
+    x: clamp(current.x + dx, 0.02, 0.98),
+    y: clamp(current.y + dy, 0.02, 0.98)
+  }));
+  const bounds = strokeBounds(object.points);
+  object.x = bounds.x;
+  object.y = bounds.y;
+  object.w = bounds.w;
+  object.h = bounds.h;
 }
 
 function deleteObject(action) {
@@ -1423,32 +1742,6 @@ function shapeLabel(shape) {
   return labels[shape] || "图形";
 }
 
-function compositeLabel(type) {
-  const labels = {
-    sun: "太阳",
-    cloud: "云朵",
-    tree: "树",
-    house: "房子",
-    flower: "花",
-    girl: "小女孩"
-  };
-  return labels[type] || "组合对象";
-}
-
-function compositeWidth(type, base) {
-  if (type === "house") return base * 1.18;
-  if (type === "cloud") return base * 1.45;
-  if (type === "girl") return base * 0.78;
-  return base;
-}
-
-function compositeHeight(type, base) {
-  if (type === "house") return base * 0.95;
-  if (type === "cloud") return base * 0.72;
-  if (type === "girl") return base * 1.18;
-  return base;
-}
-
 function draw() {
   const { width, height } = canvasSize();
   ctx.clearRect(0, 0, width, height);
@@ -1457,6 +1750,7 @@ function draw() {
     drawObject(object);
   }
   drawTurtleCursor(width, height);
+  drawPlanningCursor(width, height);
 }
 
 function drawPaper(width, height) {
@@ -1465,13 +1759,13 @@ function drawPaper(width, height) {
   ctx.fillRect(0, 0, width, height);
   ctx.strokeStyle = "rgba(148, 163, 184, 0.18)";
   ctx.lineWidth = 1;
-  for (let x = 0; x < width; x += 34) {
+  for (let x = 0; x < width; x += gridUnit) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
     ctx.lineTo(x, height);
     ctx.stroke();
   }
-  for (let y = 0; y < height; y += 34) {
+  for (let y = 0; y < height; y += gridUnit) {
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(width, y);
@@ -1518,20 +1812,25 @@ function drawCompositionGrid(width, height) {
 
 function drawObject(object) {
   ctx.save();
+  if (object.kind === "stroke") {
+    drawStroke(object);
+    if (object.id === state.lastObjectId) {
+      drawStrokeSelection(object);
+    }
+    ctx.restore();
+    return;
+  }
+
   ctx.translate(object.x, object.y);
   if (object.rotation) {
     ctx.rotate((object.rotation * Math.PI) / 180);
   }
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  if (object.kind === "stroke") {
-    drawStroke(object);
-  } else if (object.kind === "shape") {
+  if (object.kind === "shape") {
     drawShape(object);
-  } else {
-    drawComposite(object);
   }
-  if (object.id === state.lastObjectId && object.kind !== "stroke") {
+  if (object.id === state.lastObjectId) {
     drawSelection(object);
   }
   ctx.restore();
@@ -1542,6 +1841,8 @@ function drawStroke(object) {
   if (!Array.isArray(object.points) || object.points.length < 2) return;
   ctx.strokeStyle = object.stroke || palette.black;
   ctx.lineWidth = object.strokeWidth || 4;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.beginPath();
   object.points.forEach((point, index) => {
     const x = point.x * width;
@@ -1552,7 +1853,19 @@ function drawStroke(object) {
       ctx.lineTo(x, y);
     }
   });
+  if (object.closed) {
+    ctx.closePath();
+  }
   ctx.stroke();
+}
+
+function drawStrokeSelection(object) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(37, 99, 235, 0.7)";
+  ctx.setLineDash([6, 5]);
+  ctx.lineWidth = 2;
+  ctx.strokeRect(object.x - object.w / 2 - 8, object.y - object.h / 2 - 8, object.w + 16, object.h + 16);
+  ctx.restore();
 }
 
 function drawTurtleCursor(width, height) {
@@ -1573,6 +1886,32 @@ function drawTurtleCursor(width, height) {
   ctx.lineTo(-10, 9);
   ctx.closePath();
   ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlanningCursor(width, height) {
+  if (!state.drawCursor.active) return;
+  const x = state.drawCursor.x * width;
+  const y = state.drawCursor.y * height;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(-0.7);
+  ctx.fillStyle = "#2563eb";
+  ctx.strokeStyle = "#1f2937";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -18);
+  ctx.lineTo(8, 10);
+  ctx.lineTo(0, 16);
+  ctx.lineTo(-8, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.strokeStyle = "rgba(37, 99, 235, 0.35)";
+  ctx.arc(0, 0, 18, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
@@ -1627,210 +1966,6 @@ function drawShape(object) {
     ctx.textBaseline = "middle";
     ctx.fillText(object.text, 0, 0);
   }
-}
-
-function drawComposite(object) {
-  const map = {
-    sun: drawSun,
-    cloud: drawCloud,
-    tree: drawTree,
-    house: drawHouse,
-    flower: drawFlower,
-    girl: drawGirl
-  };
-  const fn = map[object.object];
-  if (fn) fn(object);
-}
-
-function drawSun(object) {
-  const r = object.w * 0.28;
-  ctx.strokeStyle = "#1f2937";
-  ctx.lineWidth = object.strokeWidth;
-  for (let i = 0; i < 12; i += 1) {
-    const angle = (Math.PI * 2 * i) / 12;
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(angle) * (r + 12), Math.sin(angle) * (r + 12));
-    ctx.lineTo(Math.cos(angle) * (r + 28), Math.sin(angle) * (r + 28));
-    ctx.stroke();
-  }
-  ctx.fillStyle = palette.yellow;
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  drawFace(0, 0, r * 0.85);
-}
-
-function drawCloud(object) {
-  ctx.fillStyle = "#f8fafc";
-  ctx.strokeStyle = "#1f2937";
-  ctx.lineWidth = object.strokeWidth;
-  const w = object.w;
-  const h = object.h;
-  ctx.beginPath();
-  ctx.ellipse(-w * 0.24, h * 0.05, w * 0.22, h * 0.3, 0, 0, Math.PI * 2);
-  ctx.ellipse(-w * 0.04, -h * 0.08, w * 0.26, h * 0.38, 0, 0, Math.PI * 2);
-  ctx.ellipse(w * 0.24, h * 0.03, w * 0.24, h * 0.32, 0, 0, Math.PI * 2);
-  ctx.rect(-w * 0.34, h * 0.02, w * 0.7, h * 0.3);
-  ctx.fill("nonzero");
-  ctx.stroke();
-}
-
-function drawTree(object) {
-  const w = object.w;
-  const h = object.h;
-  ctx.fillStyle = "#a16207";
-  ctx.strokeStyle = "#1f2937";
-  ctx.lineWidth = object.strokeWidth;
-  roundedRect(-w * 0.12, -h * 0.02, w * 0.24, h * 0.48, 10);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = palette.green;
-  ctx.beginPath();
-  ctx.arc(-w * 0.2, -h * 0.22, w * 0.26, 0, Math.PI * 2);
-  ctx.arc(w * 0.08, -h * 0.32, w * 0.3, 0, Math.PI * 2);
-  ctx.arc(w * 0.26, -h * 0.12, w * 0.24, 0, Math.PI * 2);
-  ctx.arc(-w * 0.02, -h * 0.06, w * 0.28, 0, Math.PI * 2);
-  ctx.fill("nonzero");
-  ctx.stroke();
-}
-
-function drawHouse(object) {
-  const w = object.w;
-  const h = object.h;
-  ctx.strokeStyle = "#1f2937";
-  ctx.lineWidth = object.strokeWidth;
-
-  ctx.fillStyle = "#fde68a";
-  roundedRect(-w * 0.36, -h * 0.02, w * 0.72, h * 0.5, 12);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = "#f87171";
-  ctx.beginPath();
-  ctx.moveTo(-w * 0.43, -h * 0.03);
-  ctx.lineTo(0, -h * 0.42);
-  ctx.lineTo(w * 0.43, -h * 0.03);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = "#60a5fa";
-  roundedRect(-w * 0.26, h * 0.08, w * 0.18, h * 0.16, 6);
-  ctx.fill();
-  ctx.stroke();
-  roundedRect(w * 0.1, h * 0.08, w * 0.18, h * 0.16, 6);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = "#fb923c";
-  roundedRect(-w * 0.08, h * 0.18, w * 0.16, h * 0.28, 7);
-  ctx.fill();
-  ctx.stroke();
-}
-
-function drawFlower(object) {
-  const w = object.w;
-  const h = object.h;
-  ctx.strokeStyle = "#1f2937";
-  ctx.lineWidth = object.strokeWidth;
-  ctx.fillStyle = palette.green;
-  ctx.beginPath();
-  ctx.moveTo(0, h * 0.38);
-  ctx.lineTo(0, -h * 0.08);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.ellipse(-w * 0.1, h * 0.1, w * 0.1, h * 0.05, -0.5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = object.fill || palette.pink;
-  for (let i = 0; i < 6; i += 1) {
-    const angle = (Math.PI * 2 * i) / 6;
-    ctx.beginPath();
-    ctx.ellipse(Math.cos(angle) * w * 0.16, -h * 0.18 + Math.sin(angle) * h * 0.16, w * 0.1, h * 0.15, angle, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-  ctx.fillStyle = palette.yellow;
-  ctx.beginPath();
-  ctx.arc(0, -h * 0.18, w * 0.09, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-}
-
-function drawGirl(object) {
-  const w = object.w;
-  const h = object.h;
-  ctx.strokeStyle = "#1f2937";
-  ctx.lineWidth = object.strokeWidth;
-
-  ctx.fillStyle = "#111827";
-  ctx.beginPath();
-  ctx.ellipse(0, -h * 0.31, w * 0.38, h * 0.2, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = "#fde2c2";
-  ctx.beginPath();
-  ctx.ellipse(0, -h * 0.29, w * 0.28, h * 0.17, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = object.fill || palette.red;
-  ctx.beginPath();
-  ctx.moveTo(0, -h * 0.1);
-  ctx.lineTo(w * 0.34, h * 0.26);
-  ctx.lineTo(-w * 0.34, h * 0.26);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(-w * 0.24, 0);
-  ctx.lineTo(-w * 0.45, h * 0.14);
-  ctx.moveTo(w * 0.24, 0);
-  ctx.lineTo(w * 0.45, h * 0.14);
-  ctx.moveTo(-w * 0.13, h * 0.26);
-  ctx.lineTo(-w * 0.16, h * 0.43);
-  ctx.moveTo(w * 0.13, h * 0.26);
-  ctx.lineTo(w * 0.16, h * 0.43);
-  ctx.stroke();
-
-  drawFace(0, -h * 0.29, w * 0.2);
-
-  ctx.fillStyle = palette.pink;
-  ctx.beginPath();
-  ctx.moveTo(w * 0.18, -h * 0.45);
-  ctx.lineTo(w * 0.34, -h * 0.52);
-  ctx.lineTo(w * 0.34, -h * 0.38);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(w * 0.18, -h * 0.45);
-  ctx.lineTo(w * 0.02, -h * 0.52);
-  ctx.lineTo(w * 0.02, -h * 0.38);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-}
-
-function drawFace(x, y, r) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.fillStyle = "#1f2937";
-  ctx.beginPath();
-  ctx.arc(-r * 0.32, -r * 0.12, Math.max(2.4, r * 0.08), 0, Math.PI * 2);
-  ctx.arc(r * 0.32, -r * 0.12, Math.max(2.4, r * 0.08), 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.strokeStyle = "#1f2937";
-  ctx.lineWidth = Math.max(2, r * 0.08);
-  ctx.arc(0, r * 0.08, r * 0.34, 0.15, Math.PI - 0.15);
-  ctx.stroke();
-  ctx.restore();
 }
 
 function roundedRect(x, y, width, height, radius) {
@@ -1906,7 +2041,7 @@ async function handleSpeech(text) {
   transcriptText.textContent = cleaned === normalized ? cleaned : `${cleaned} -> ${normalized}`;
   setSpeechHint(cleaned === normalized ? "已识别语音，正在执行绘图指令。" : "已识别语音，并完成口令纠错。");
   const dsl = await parseCommandSmart(cleaned);
-  executeDsl(dsl);
+  await executeDsl(dsl);
 }
 
 async function checkLlmStatus() {
@@ -2167,7 +2302,6 @@ listenButton.addEventListener("click", async () => {
 
 window.addEventListener("resize", resizeCanvas);
 
-setupCommands();
 setupSpeech();
 resizeCanvas();
 updatePanels();
