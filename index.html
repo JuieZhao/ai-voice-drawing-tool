@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>声绘板 VoxCanvas</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="studio">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Voice Drawing Studio</p>
+            <h1>声绘板</h1>
+          </div>
+          <div class="status-cluster">
+            <span id="speechStatus" class="status-pill">待启动</span>
+            <button id="listenButton" class="mic-button" type="button" aria-label="启动语音监听" title="启动语音监听">
+              <span class="mic-icon" aria-hidden="true"></span>
+            </button>
+          </div>
+        </header>
+
+        <section class="workspace">
+          <aside class="side-panel left-panel" aria-label="语音与执行状态">
+            <div class="panel-block transcript-block">
+              <p class="panel-label">当前语音</p>
+              <p id="transcriptText" class="transcript">等待语音输入</p>
+            </div>
+
+            <div class="panel-block">
+              <p class="panel-label">推荐口令</p>
+              <div class="command-grid" id="commandGrid"></div>
+            </div>
+
+            <div class="panel-block log-block">
+              <p class="panel-label">执行日志</p>
+              <ol id="logList" class="log-list"></ol>
+            </div>
+          </aside>
+
+          <section class="canvas-stage" aria-label="绘图画布">
+            <canvas id="drawingCanvas"></canvas>
+          </section>
+
+          <aside class="side-panel right-panel" aria-label="画布对象">
+            <div class="panel-block score-block">
+              <p class="panel-label">画布状态</p>
+              <dl class="metrics">
+                <div>
+                  <dt>对象</dt>
+                  <dd id="objectCount">0</dd>
+                </div>
+                <div>
+                  <dt>操作</dt>
+                  <dd id="actionCount">0</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div class="panel-block">
+              <p class="panel-label">对象列表</p>
+              <ul id="layerList" class="layer-list"></ul>
+            </div>
+
+            <div class="panel-block dsl-block">
+              <p class="panel-label">最近 DSL</p>
+              <pre id="dslOutput">{}</pre>
+            </div>
+          </aside>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
