@@ -24,7 +24,7 @@
 语音输入 -> 语音识别 -> 指令解析 -> 绘图 DSL -> Canvas 渲染 -> 语音继续编辑
 ```
 
-AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可校验的绘图动作。当前 MVP 先从基础图形和少量组合对象开始，再逐步拓展到人物、动物和复杂场景。
+AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可校验的绘图动作。当前 MVP 先从基础图形和少量组合对象开始，再逐步拓展到人物、动物和复杂场景；复杂口令可选接入 DeepSeek，把纠错后的中文口令转换为绘图 DSL。
 
 ## 当前能力
 
@@ -34,6 +34,7 @@ AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可
 - 支持相对位置：“在它右边画一个红色三角形”
 - 支持撤销、重做、清空画布
 - 支持组合对象：太阳、云、树、房子、花、小女孩
+- 支持可选 DeepSeek 复杂口令解析，失败时自动回退本地规则
 - 展示最近一次绘图 DSL 和执行日志
 - 统一儿童绘本式扁平矢量风格
 
@@ -55,10 +56,10 @@ AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可
 
 ## 本地运行
 
-本项目无前端依赖，使用任意静态服务器即可运行。
+默认开发服务使用 Node.js，既托管静态页面，也提供可选的 DeepSeek 解析接口。
 
 ```bash
-python -m http.server 5173
+npm run dev
 ```
 
 然后打开：
@@ -67,7 +68,36 @@ python -m http.server 5173
 http://localhost:5173
 ```
 
+如果只想运行不带 LLM 的静态版本：
+
+```bash
+npm run static
+```
+
 语音识别依赖浏览器 Web Speech API，建议使用 Chrome。
+
+## DeepSeek Key 配置
+
+项目不会在浏览器前端暴露 API Key。Key 只由本地 Node 服务读取。
+
+临时配置 PowerShell 环境变量：
+
+```powershell
+$env:DEEPSEEK_API_KEY="你的 DeepSeek API Key"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+npm run dev
+```
+
+也可以在本地新建 `.env` 记录配置，但不要提交 `.env`：
+
+```text
+DEEPSEEK_API_KEY=你的 DeepSeek API Key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_THINKING=disabled
+```
+
+DeepSeek 官方 API 使用 OpenAI-compatible 格式。当前默认模型使用 `deepseek-v4-flash`；如需更强解析可改为 `deepseek-v4-pro`。旧模型名 `deepseek-chat` 和 `deepseek-reasoner` 官方标注会在 2026-07-24 15:59 UTC 废弃，因此不作为默认值。
 
 ## 依赖与第三方说明
 
@@ -78,11 +108,12 @@ http://localhost:5173
 - Canvas API：绘制基础图形和组合对象
 - Web Speech API：浏览器语音识别
 - MediaDevices `getUserMedia`：麦克风权限检测
+- 可选 DeepSeek API：复杂口令纠错与绘图 DSL 生成
 
 开发/验证工具：
 
-- Python `http.server`：本地静态服务
-- Node.js：执行 `node --check src/app.js` 语法检查
+- Node.js：本地开发服务、DeepSeek 代理接口、语法检查
+- Python `http.server`：可选静态服务
 
 原创功能部分：
 
@@ -92,6 +123,7 @@ http://localhost:5173
 - 对象状态、撤销、重做
 - 组合对象模板
 - 语音诊断与错误提示
+- DeepSeek 解析提示词、DSL 过滤和本地规则回退逻辑
 
 本项目未复用个人过去项目代码片段；如后续引入第三方库、模板或历史代码，将在 README 和对应 PR 描述中注明来源与用途。
 
@@ -113,6 +145,8 @@ http://localhost:5173
 .
 ├─ favicon.svg
 ├─ index.html
+├─ server.js
+├─ .env.example
 ├─ src/
 │  ├─ app.js
 │  └─ styles.css
@@ -131,8 +165,9 @@ http://localhost:5173
 因此当前版本选择：
 
 - 简单命令走本地解析，保证低延迟。
+- 复杂命令可选走 DeepSeek 解析，保证自然语言理解上限。
+- LLM 输出必须经过本地 DSL 过滤，不能直接执行模型返回内容。
 - 复杂对象先用高质量矢量组合模板。
-- 后续再接入 LLM，把复杂中文指令转换为更通用的绘图 DSL。
 - 不预制万物，而是通过基础图形、审美部件、组合对象逐步拓展能力边界。
 
 ## 持续交付
@@ -147,7 +182,6 @@ http://localhost:5173
 
 ## 后续计划
 
-- 接入 LLM JSON 指令解析
 - 增加 JSON Schema 校验
 - 支持更多组合对象和人物配饰
 - 支持导出 PNG / SVG
