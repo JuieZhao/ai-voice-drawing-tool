@@ -51,6 +51,10 @@ const demoCommands = [
   "向右转九十度",
   "换成红色",
   "画一个蓝色圆形放在中间",
+  "在 B2 画一个黄色圆形",
+  "把它移到 C3",
+  "隐藏坐标",
+  "显示坐标",
   "在它右边画一个红色三角形",
   "把圆形变大一点",
   "在右上角画一个太阳",
@@ -60,10 +64,13 @@ const demoCommands = [
   "撤销上一步"
 ];
 
+const gridColumns = ["A", "B", "C"];
+const gridRows = ["1", "2", "3"];
+const gridCells = gridColumns.flatMap((column) => gridRows.map((row) => `${column}${row}`));
 const supportedShapes = ["circle", "rect", "triangle", "line", "arrow", "text"];
 const supportedComposites = ["sun", "cloud", "tree", "house", "flower", "girl"];
 const supportedTargets = ["last_created", ...supportedShapes, ...supportedComposites];
-const supportedPositions = ["center", "left", "right", "top", "bottom", "top_left", "top_right", "bottom_left", "bottom_right"];
+const supportedPositions = ["center", "left", "right", "top", "bottom", "top_left", "top_right", "bottom_left", "bottom_right", ...gridCells];
 const supportedPlacements = ["left", "right", "top", "bottom"];
 const supportedActions = [
   "create_shape",
@@ -81,7 +88,8 @@ const supportedActions = [
   "turtle_turn",
   "turtle_home",
   "turtle_color",
-  "turtle_width"
+  "turtle_width",
+  "set_grid"
 ];
 const llmComplexPattern = /和|同时|一起|旁边|站在|天上|天空|地上|背景|场景|右边有|左边有|上面有|下面有|前面|后面|附近|周围|然后|再|并且/;
 
@@ -107,6 +115,7 @@ const state = {
   lastResultAt: 0,
   networkErrorCount: 0,
   lastNetworkErrorAt: 0,
+  compositionGridVisible: true,
   llmAvailable: null,
   llmInFlight: false,
   llmProvider: ""
@@ -326,6 +335,36 @@ function canvasSize() {
   return { width: rect.width, height: rect.height };
 }
 
+function gridCellFromText(text) {
+  const normalized = normalizeSpeechText(text)
+    .toUpperCase()
+    .replace(/Ａ/g, "A")
+    .replace(/Ｂ/g, "B")
+    .replace(/Ｃ/g, "C")
+    .replace(/[一幺]/g, "1")
+    .replace(/二|两/g, "2")
+    .replace(/三/g, "3");
+  const match = normalized.match(/(?:第)?([ABC])(?:列)?([123])(?:格|区|号)?/);
+  if (!match) return null;
+  return `${match[1]}${match[2]}`;
+}
+
+function gridCellToPoint(cell, size) {
+  const match = String(cell || "").toUpperCase().match(/^([ABC])([123])$/);
+  if (!match) return null;
+
+  const { width, height } = canvasSize();
+  const marginX = Math.max(64, size.width / 2 + 24);
+  const marginY = Math.max(64, size.height / 2 + 24);
+  const col = gridColumns.indexOf(match[1]);
+  const row = gridRows.indexOf(match[2]);
+
+  return {
+    x: clamp(((col + 0.5) / gridColumns.length) * width, marginX, width - marginX),
+    y: clamp(((row + 0.5) / gridRows.length) * height, marginY, height - marginY)
+  };
+}
+
 function toPoint(position, size = { width: 120, height: 120 }) {
   const { width, height } = canvasSize();
   const marginX = Math.max(64, size.width / 2 + 24);
@@ -337,6 +376,9 @@ function toPoint(position, size = { width: 120, height: 120 }) {
       y: clamp(position.y * height, marginY, height - marginY)
     };
   }
+
+  const gridPoint = gridCellToPoint(position, size);
+  if (gridPoint) return gridPoint;
 
   const map = {
     center: [0.5, 0.52],
@@ -358,6 +400,8 @@ function toPoint(position, size = { width: 120, height: 120 }) {
 
 function positionFromText(text) {
   const normalized = normalizeSpeechText(text);
+  const gridCell = gridCellFromText(normalized);
+  if (gridCell) return gridCell;
   if (/左上|左上角/.test(normalized)) return "top_left";
   if (/右上|右上角/.test(normalized)) return "top_right";
   if (/左下|左下角/.test(normalized)) return "bottom_left";
@@ -578,6 +622,12 @@ function parseCommand(text) {
   if (/清空|清除全部|全部删除/.test(normalized)) {
     return { actions: [{ type: "clear_canvas" }] };
   }
+  if (/显示|打开/.test(normalized) && /坐标|网格|九宫格|编号/.test(normalized)) {
+    return { actions: [{ type: "set_grid", visible: true }] };
+  }
+  if (/隐藏|关闭/.test(normalized) && /坐标|网格|九宫格|编号/.test(normalized)) {
+    return { actions: [{ type: "set_grid", visible: false }] };
+  }
 
   const turtleCommand = turtleCommandFromText(normalized);
   if (turtleCommand) return turtleCommand;
@@ -768,6 +818,10 @@ function sanitizeAction(action) {
       type: "turtle_width",
       width: Number.isFinite(width) ? clamp(width, 1, 14) : 4
     };
+  }
+
+  if (action.type === "set_grid") {
+    return { type: "set_grid", visible: action.visible !== false };
   }
 
   if (action.type === "create_shape") {
@@ -1056,6 +1110,13 @@ function executeAction(action) {
     state.actionTotal += 1;
     return;
   }
+  if (action.type === "set_grid") {
+    pushHistory();
+    state.compositionGridVisible = Boolean(action.visible);
+    state.actionTotal += 1;
+    addLog(`${state.compositionGridVisible ? "显示" : "隐藏"}坐标网格`);
+    return;
+  }
 
   pushHistory();
 
@@ -1335,6 +1396,84 @@ function drawPaper(width, height) {
     ctx.lineTo(width, y);
     ctx.stroke();
   }
+  if (state.compositionGridVisible) {
+    drawCompositionGrid(width, height);
+  }
+  ctx.restore();
+}
+
+function drawCompositionGrid(width, height) {
+  const colWidth = width / gridColumns.length;
+  const rowHeight = height / gridRows.length;
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(31, 41, 55, 0.2)";
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([7, 8]);
+
+  for (let i = 1; i < gridColumns.length; i += 1) {
+    const x = i * colWidth;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+
+  for (let i = 1; i < gridRows.length; i += 1) {
+    const y = i * rowHeight;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "rgba(31, 41, 55, 0.28)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, Math.max(1, width - 1), Math.max(1, height - 1));
+
+  for (let col = 0; col < gridColumns.length; col += 1) {
+    drawGridBadge(gridColumns[col], col * colWidth + colWidth / 2, 17, "center");
+  }
+
+  for (let row = 0; row < gridRows.length; row += 1) {
+    drawGridBadge(gridRows[row], 17, row * rowHeight + rowHeight / 2, "center");
+  }
+
+  for (let row = 0; row < gridRows.length; row += 1) {
+    for (let col = 0; col < gridColumns.length; col += 1) {
+      drawGridBadge(
+        `${gridColumns[col]}${gridRows[row]}`,
+        col * colWidth + 18,
+        row * rowHeight + 34,
+        "left",
+        true
+      );
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawGridBadge(label, x, y, align = "center", subtle = false) {
+  ctx.save();
+  ctx.font = "700 12px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const width = ctx.measureText(label).width + 12;
+  const height = 22;
+  const left = align === "center" ? x - width / 2 : x;
+  const top = y - height / 2;
+
+  ctx.fillStyle = subtle ? "rgba(255, 255, 255, 0.48)" : "rgba(255, 255, 255, 0.82)";
+  ctx.strokeStyle = subtle ? "rgba(100, 116, 139, 0.16)" : "rgba(100, 116, 139, 0.26)";
+  ctx.lineWidth = 1;
+  roundedRect(left, top, width, height, 7);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = subtle ? "rgba(100, 116, 139, 0.66)" : "#475569";
+  ctx.fillText(label, left + width / 2, y + 0.5);
   ctx.restore();
 }
 

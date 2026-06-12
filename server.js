@@ -77,11 +77,11 @@ const commandSystemPrompt = `
 支持的 actions：
 - create_shape: shape 为 circle, rect, triangle, line, arrow, text
 - create_composite: object 为 sun, cloud, tree, house, flower, girl
-- update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas
+- update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas, set_grid
 - pen_down, pen_up, turtle_forward, turtle_turn, turtle_home, turtle_color, turtle_width
 
 支持的位置：
-center, left, right, top, bottom, top_left, top_right, bottom_left, bottom_right
+center, left, right, top, bottom, top_left, top_right, bottom_left, bottom_right, A1, B1, C1, A2, B2, C2, A3, B3, C3
 
 EXAMPLE INPUT:
 落笔，向前走一百，右转九十度，再向前走六十
