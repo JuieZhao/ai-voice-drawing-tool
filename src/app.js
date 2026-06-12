@@ -10,6 +10,9 @@ const dslOutput = document.querySelector("#dslOutput");
 const objectCount = document.querySelector("#objectCount");
 const actionCount = document.querySelector("#actionCount");
 const commandGrid = document.querySelector("#commandGrid");
+const llmStatus = document.querySelector("#llmStatus");
+const llmStatusText = document.querySelector("#llmStatusText");
+const llmModelName = document.querySelector("#llmModelName");
 
 const palette = {
   red: "#f87171",
@@ -226,6 +229,25 @@ function setSpeechHint(message, type = "info") {
   speechHint.textContent = message;
   speechHint.classList.toggle("is-warning", type === "warning");
   speechHint.classList.toggle("is-error", type === "error");
+}
+
+function setLlmStatus(status, model = "本地规则") {
+  if (!llmStatus || !llmStatusText || !llmModelName) return;
+
+  const labels = {
+    checking: "检测中",
+    connected: "已连接",
+    offline: "未配置",
+    error: "不可用"
+  };
+
+  llmStatus.classList.toggle("is-checking", status === "checking");
+  llmStatus.classList.toggle("is-connected", status === "connected");
+  llmStatus.classList.toggle("is-offline", status === "offline");
+  llmStatus.classList.toggle("is-error", status === "error");
+  llmStatusText.textContent = labels[status] || labels.error;
+  llmModelName.textContent = model ? `模型 ${model}` : "模型 --";
+  llmStatus.title = `DeepSeek 指令增强：${llmStatusText.textContent}，${llmModelName.textContent}`;
 }
 
 function setListening(isListening) {
@@ -718,6 +740,7 @@ async function parseCommandSmart(text) {
     const result = await fetchLlmCommand(text);
     state.llmAvailable = true;
     state.llmProvider = result.provider || "DeepSeek";
+    setLlmStatus("connected", result.model || state.llmProvider);
     const dsl = sanitizeDsl(result.dsl || result);
     if (isExecutableDsl(dsl)) {
       addLog(`${state.llmProvider} 已拆解复杂口令`);
@@ -727,6 +750,9 @@ async function parseCommandSmart(text) {
   } catch (error) {
     if (error.status === 404 || error.status === 503) {
       state.llmAvailable = false;
+      setLlmStatus("offline");
+    } else {
+      setLlmStatus("error", state.llmProvider || "本地规则");
     }
     addLog(`DeepSeek 解析不可用，已回退本地规则：${error.message}`, "error");
     setSpeechHint("DeepSeek 解析暂不可用，已使用本地规则继续执行。", "warning");
@@ -1376,20 +1402,26 @@ async function handleSpeech(text) {
 }
 
 async function checkLlmStatus() {
+  setLlmStatus("checking");
   try {
     const response = await fetch("/api/llm-status");
     if (!response.ok) {
       state.llmAvailable = false;
+      setLlmStatus("offline");
       return;
     }
     const status = await response.json();
     state.llmAvailable = Boolean(status.configured);
     state.llmProvider = status.provider || "DeepSeek";
     if (status.configured) {
+      setLlmStatus("connected", status.model || state.llmProvider);
       addLog(`${state.llmProvider} 指令增强已连接：${status.model}`);
+    } else {
+      setLlmStatus("offline", status.model || "本地规则");
     }
   } catch (error) {
     state.llmAvailable = false;
+    setLlmStatus("error");
   }
 }
 

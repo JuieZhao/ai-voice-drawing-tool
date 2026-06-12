@@ -75,7 +75,83 @@ h1 {
 .status-cluster {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.ai-status {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.ai-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #94a3b8;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.14);
+  flex: 0 0 auto;
+}
+
+.ai-status-text {
+  display: grid;
+  gap: 2px;
+}
+
+.ai-status-text strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.ai-model-name {
+  max-width: 150px;
+  padding-left: 8px;
+  border-left: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-status.is-connected {
+  border-color: rgba(15, 118, 110, 0.26);
+  background: rgba(204, 251, 241, 0.62);
+}
+
+.ai-status.is-connected .ai-status-dot {
+  background: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+}
+
+.ai-status.is-offline {
+  border-color: rgba(180, 83, 9, 0.24);
+  background: rgba(254, 243, 199, 0.7);
+}
+
+.ai-status.is-offline .ai-status-dot {
+  background: #b45309;
+  box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.14);
+}
+
+.ai-status.is-error {
+  border-color: rgba(153, 27, 27, 0.22);
+  background: rgba(254, 242, 242, 0.72);
+}
+
+.ai-status.is-error .ai-status-dot {
+  background: #991b1b;
+  box-shadow: 0 0 0 3px rgba(153, 27, 27, 0.12);
 }
 
 .status-pill {

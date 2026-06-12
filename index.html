@@ -16,6 +16,14 @@
             <h1>声绘板</h1>
           </div>
           <div class="status-cluster">
+            <div id="llmStatus" class="ai-status is-checking" aria-live="polite" title="DeepSeek 指令增强状态">
+              <span class="ai-status-dot" aria-hidden="true"></span>
+              <span class="ai-status-text">
+                <span>AI增强</span>
+                <strong id="llmStatusText">检测中</strong>
+              </span>
+              <span id="llmModelName" class="ai-model-name">模型 --</span>
+            </div>
             <span id="speechStatus" class="status-pill">待启动</span>
             <button id="listenButton" class="mic-button" type="button" aria-label="启动语音监听" title="启动语音监听">
               <span class="mic-icon" aria-hidden="true"></span>
