@@ -117,6 +117,7 @@ const state = {
   networkErrorCount: 0,
   lastNetworkErrorAt: 0,
   compositionGridVisible: true,
+  drawCursor: { active: false, x: 0.5, y: 0.5 },
   llmAvailable: null,
   llmInFlight: false,
   llmProvider: ""
@@ -128,6 +129,12 @@ function uid(prefix = "obj") {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function initialTurtle() {
@@ -530,26 +537,26 @@ function catPlan() {
   const orange = "#fb923c";
   return {
     plan: [
-      "先画身体和尾巴，确定整体姿态",
-      "在身体上方画头部和两只耳朵",
-      "把眼睛、鼻子和胡须放回头部范围内",
-      "补上脚掌，让小猫更像坐着的姿态"
+      "画身体，确定小猫坐姿",
+      "沿着身体上方画头部和耳朵",
+      "在头部内部画眼睛、鼻子和胡须",
+      "贴着身体补尾巴和脚掌"
     ],
     actions: [
-      { type: "create_shape", shape: "circle", fill: "#fdba74", position: { x: 0.5, y: 0.58 }, width: 128, height: 150, label: "身体" },
-      { type: "create_shape", shape: "line", fill: orange, position: { x: 0.62, y: 0.54 }, size: 92, rotation: -48, strokeWidth: 7, label: "尾巴" },
-      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.45, y: 0.33 }, width: 46, height: 58, rotation: -18, label: "左耳" },
-      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.55, y: 0.33 }, width: 46, height: 58, rotation: 18, label: "右耳" },
-      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.5, y: 0.42 }, width: 118, height: 104, label: "小猫头部" },
-      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.47, y: 0.41 }, size: 13, label: "左眼" },
-      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.53, y: 0.41 }, size: 13, label: "右眼" },
-      { type: "create_shape", shape: "triangle", fill: palette.pink, position: { x: 0.5, y: 0.445 }, size: 16, rotation: 180, label: "鼻子" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.44, y: 0.45 }, size: 42, rotation: -10, strokeWidth: 2, label: "左胡须" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.44, y: 0.47 }, size: 42, rotation: 8, strokeWidth: 2, label: "左胡须" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.56, y: 0.45 }, size: 42, rotation: 10, strokeWidth: 2, label: "右胡须" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.56, y: 0.47 }, size: 42, rotation: -8, strokeWidth: 2, label: "右胡须" },
-      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.46, y: 0.68 }, width: 36, height: 24, label: "左脚" },
-      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.54, y: 0.68 }, width: 36, height: 24, label: "右脚" }
+      { type: "create_shape", shape: "circle", fill: "#fdba74", position: { x: 0.5, y: 0.57 }, width: 126, height: 148, label: "身体" },
+      { type: "create_shape", shape: "line", fill: orange, position: { x: 0.59, y: 0.55 }, size: 82, rotation: -48, strokeWidth: 7, label: "尾巴" },
+      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.455, y: 0.355 }, width: 40, height: 52, rotation: -18, label: "左耳" },
+      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.545, y: 0.355 }, width: 40, height: 52, rotation: 18, label: "右耳" },
+      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.5, y: 0.43 }, width: 112, height: 102, label: "小猫头部" },
+      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.472, y: 0.415 }, size: 10, label: "左眼" },
+      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.528, y: 0.415 }, size: 10, label: "右眼" },
+      { type: "create_shape", shape: "triangle", fill: palette.pink, position: { x: 0.5, y: 0.447 }, size: 14, rotation: 180, label: "鼻子" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.446, y: 0.45 }, size: 34, rotation: -10, strokeWidth: 2, label: "左胡须" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.446, y: 0.467 }, size: 34, rotation: 8, strokeWidth: 2, label: "左胡须" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.554, y: 0.45 }, size: 34, rotation: 10, strokeWidth: 2, label: "右胡须" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.554, y: 0.467 }, size: 34, rotation: -8, strokeWidth: 2, label: "右胡须" },
+      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.465, y: 0.665 }, width: 34, height: 23, label: "左脚" },
+      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.535, y: 0.665 }, width: 34, height: 23, label: "右脚" }
     ]
   };
 }
@@ -1132,7 +1139,7 @@ function resolveRelative(relativeTo, size) {
   };
 }
 
-function executeDsl(dsl) {
+async function executeDsl(dsl) {
   if (dsl.clarification) {
     addLog(dsl.clarification, "error");
     return;
@@ -1148,12 +1155,78 @@ function executeDsl(dsl) {
     return;
   }
 
-  for (const action of actions) {
-    executeAction(action);
-  }
+  const shouldAnimate = shouldAnimateDrawing(dsl);
+  state.drawCursor.active = shouldAnimate;
 
-  updatePanels();
-  draw();
+  try {
+    for (const action of actions) {
+      if (shouldAnimate) {
+        await moveDrawingCursorToAction(action);
+      }
+      executeAction(action);
+      updatePanels();
+      draw();
+      if (shouldAnimate) {
+        await wait(90);
+      }
+    }
+
+    if (shouldAnimate) {
+      await wait(160);
+    }
+  } finally {
+    if (shouldAnimate) {
+      state.drawCursor.active = false;
+      draw();
+    }
+  }
+}
+
+function shouldAnimateDrawing(dsl) {
+  const actions = Array.isArray(dsl.actions) ? dsl.actions : [];
+  if (actions.length < 2) return false;
+  if (!Array.isArray(dsl.plan) || !dsl.plan.length) return false;
+  return actions.some((action) => action.type === "create_shape" || action.type === "create_composite");
+}
+
+async function moveDrawingCursorToAction(action) {
+  const point = actionPreviewPoint(action);
+  if (!point) return;
+
+  const from = { x: state.drawCursor.x, y: state.drawCursor.y };
+  const startedAt = performance.now();
+  const duration = 180;
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const progress = clamp((now - startedAt) / duration, 0, 1);
+      const eased = 1 - (1 - progress) ** 3;
+      state.drawCursor.x = from.x + (point.x - from.x) * eased;
+      state.drawCursor.y = from.y + (point.y - from.y) * eased;
+      draw();
+      if (progress < 1) {
+        window.requestAnimationFrame(frame);
+      } else {
+        resolve();
+      }
+    }
+    window.requestAnimationFrame(frame);
+  });
+}
+
+function actionPreviewPoint(action) {
+  if (!["create_shape", "create_composite"].includes(action.type)) return null;
+  const base = typeof action.size === "number" ? action.size : 120;
+  const width = typeof action.width === "number" ? action.width : base;
+  const height = typeof action.height === "number" ? action.height : base;
+  const point = action.relativeTo
+    ? resolveRelative(action.relativeTo, base)
+    : toPoint(action.position || "center", { width, height });
+  const { width: canvasWidth, height: canvasHeight } = canvasSize();
+  return {
+    x: clamp(point.x / Math.max(1, canvasWidth), 0.03, 0.97),
+    y: clamp(point.y / Math.max(1, canvasHeight), 0.03, 0.97)
+  };
 }
 
 function executeAction(action) {
@@ -1457,6 +1530,7 @@ function draw() {
     drawObject(object);
   }
   drawTurtleCursor(width, height);
+  drawPlanningCursor(width, height);
 }
 
 function drawPaper(width, height) {
@@ -1573,6 +1647,32 @@ function drawTurtleCursor(width, height) {
   ctx.lineTo(-10, 9);
   ctx.closePath();
   ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlanningCursor(width, height) {
+  if (!state.drawCursor.active) return;
+  const x = state.drawCursor.x * width;
+  const y = state.drawCursor.y * height;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(-0.7);
+  ctx.fillStyle = "#2563eb";
+  ctx.strokeStyle = "#1f2937";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -18);
+  ctx.lineTo(8, 10);
+  ctx.lineTo(0, 16);
+  ctx.lineTo(-8, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.strokeStyle = "rgba(37, 99, 235, 0.35)";
+  ctx.arc(0, 0, 18, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
@@ -1906,7 +2006,7 @@ async function handleSpeech(text) {
   transcriptText.textContent = cleaned === normalized ? cleaned : `${cleaned} -> ${normalized}`;
   setSpeechHint(cleaned === normalized ? "已识别语音，正在执行绘图指令。" : "已识别语音，并完成口令纠错。");
   const dsl = await parseCommandSmart(cleaned);
-  executeDsl(dsl);
+  await executeDsl(dsl);
 }
 
 async function checkLlmStatus() {

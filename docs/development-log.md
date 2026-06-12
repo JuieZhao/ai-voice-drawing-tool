@@ -48,7 +48,8 @@
 | 2026-06-12 | `feature/chrome-speech-recognition-stability` | PR `#5` | 抑制 SpeechRecognition network 错误后的自动重试刷屏 |
 | 2026-06-12 | `feature/deepseek-llm-parser` | PR `#6` | 增加 DeepSeek 可选复杂口令解析、本地 DSL 过滤和连接状态显示 |
 | 2026-06-12 | `feature/composition-grid-codes` | PR `#7` | 增加 A1-C3 坐标格、坐标显示/隐藏和坐标定位口令 |
-| 2026-06-12 | `feature/turtle-drawing-planner` | PR `#8` | 增加绘制步骤面板、规划对象、优化小猫构图，并增加海龟式路径辅助作画 |
+| 2026-06-12 | `feature/turtle-drawing-planner` | PR `#8` | 增加绘制步骤面板、规划对象和海龟式画笔控制 |
+| 2026-06-12 | `fix/cat-layout-and-turtle-paths` | PR `#9` | 优化小猫构图、去掉网格标签，并让规划对象按画笔游标逐步绘制 |
 
 所有已列 commit 均在本批次开始时间 2026-06-12 00:00 之后产生。
 
