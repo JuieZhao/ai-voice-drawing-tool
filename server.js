@@ -75,9 +75,10 @@ const commandSystemPrompt = `
 11. 不要输出贴图、图片、素材或组合模板。复杂对象也必须拆成基础笔画、路径和基础图形。
 12. draw_path 用于一笔一笔画：path 为 line、curve、circle，可设置 direction、distance、radius、anchor。
 13. create_shape 只用于必要的基础图形，不用于太阳、云、树、房子、小女孩等模板对象。
+14. 画布细网格是距离单位，1 格 = 34 像素。用户说“五格长”时优先输出 gridUnits:5，而不是 distance:5。
 
 支持的 actions：
-- draw_path: path 为 line, curve, circle；direction 为 left, right, up, down, forward；anchor 为 cursor, last_end, center, left, right, top, bottom
+- draw_path: path 为 line, curve, circle；direction 为 left, right, up, down, forward；anchor 为 cursor, last_end, center, left, right, top, bottom；可用 gridUnits 表示直线/曲线长度，用 radiusGridUnits 表示圆半径
 - create_shape: shape 为 circle, rect, triangle, line, arrow, text
 - update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas, set_grid
 - pen_down, pen_up, turtle_forward, turtle_turn, turtle_home, turtle_color, turtle_width
@@ -106,7 +107,7 @@ EXAMPLE JSON OUTPUT:
 {
   "plan": ["向右画一条直线", "从上一笔末端向下画曲线", "在当前末端画圆"],
   "actions": [
-    {"type":"draw_path","path":"line","direction":"right","distance":120,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
+    {"type":"draw_path","path":"line","direction":"right","gridUnits":4,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
     {"type":"draw_path","path":"curve","direction":"down","distance":100,"anchor":"last_end","stroke":"#1f2937","strokeWidth":4},
     {"type":"draw_path","path":"circle","radius":42,"anchor":"last_end","stroke":"#1f2937","strokeWidth":4}
   ]

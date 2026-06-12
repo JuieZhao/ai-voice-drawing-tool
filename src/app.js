@@ -9,7 +9,6 @@ const layerList = document.querySelector("#layerList");
 const dslOutput = document.querySelector("#dslOutput");
 const objectCount = document.querySelector("#objectCount");
 const actionCount = document.querySelector("#actionCount");
-const commandGrid = document.querySelector("#commandGrid");
 const planList = document.querySelector("#planList");
 
 const palette = {
@@ -43,24 +42,7 @@ const colorWords = [
   ["灰", "gray"]
 ];
 
-const demoCommands = [
-  "向右画一条直线",
-  "接着向下画一条曲线",
-  "在末端画一个圆",
-  "画一个半径六十的圆",
-  "从刚才的圆右边继续画直线",
-  "落笔",
-  "向前走一百",
-  "向右转九十度",
-  "换成红色",
-  "线条变粗一点",
-  "画一个蓝色圆形",
-  "隐藏网格",
-  "显示网格",
-  "清空画布",
-  "撤销上一步"
-];
-
+const gridUnit = 34;
 const gridColumns = ["A", "B", "C"];
 const gridRows = ["1", "2", "3"];
 const gridCells = gridColumns.flatMap((column) => gridRows.map((row) => `${column}${row}`));
@@ -241,16 +223,6 @@ function pushHistory() {
     state.history.shift();
   }
   state.redo = [];
-}
-
-function setupCommands() {
-  commandGrid.innerHTML = "";
-  for (const command of demoCommands) {
-    const chip = document.createElement("div");
-    chip.className = "command-chip";
-    chip.textContent = command;
-    commandGrid.appendChild(chip);
-  }
 }
 
 function addLog(message, type = "info") {
@@ -449,6 +421,7 @@ function pathKindFromText(text) {
   if (/曲线|弧线|弯线|弯曲/.test(normalized)) return "curve";
   if (/圆|圈/.test(normalized)) return "circle";
   if (/直线|横线|竖线|线段|一条线|画线/.test(normalized)) return "line";
+  if (gridCountFromText(normalized) && /向|往|画/.test(normalized)) return "line";
   return null;
 }
 
@@ -495,6 +468,22 @@ function numberFromText(text, fallback = null) {
   return fallback;
 }
 
+function gridCountFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  const digitMatch = normalized.match(/(\d+)(?:个)?格/);
+  if (digitMatch) return Number(digitMatch[1]);
+
+  const cnMatch = normalized.match(/([一二两三四五六七八九十百]+)(?:个)?格/);
+  if (!cnMatch) return null;
+  const count = numberFromText(cnMatch[1], null);
+  return Number.isFinite(count) ? count : null;
+}
+
+function gridDistanceFromText(text) {
+  const count = gridCountFromText(text);
+  return Number.isFinite(count) ? count * gridUnit : null;
+}
+
 function targetFromText(text) {
   const normalized = normalizeSpeechText(text);
   if (/刚才|上一个|它|这个/.test(normalized)) return "last_created";
@@ -532,6 +521,7 @@ function pathCommandFromText(text) {
   }
   const path = pathKindFromText(normalized);
   if (!path) return null;
+  const gridCount = gridCountFromText(normalized);
 
   const action = {
     type: "draw_path",
@@ -539,8 +529,10 @@ function pathCommandFromText(text) {
     stroke: palette[colorFromText(normalized, "black")] || state.turtle.stroke,
     strokeWidth: pathStrokeWidthFromText(normalized),
     direction: directionFromText(normalized),
-    distance: pathDistanceFromText(normalized),
-    radius: pathRadiusFromText(normalized),
+    distance: path === "circle" ? null : pathDistanceFromText(normalized),
+    radius: path === "circle" ? pathRadiusFromText(normalized) : null,
+    gridUnits: path === "circle" ? null : gridCount,
+    radiusGridUnits: path === "circle" ? gridCount : null,
     anchor: pathAnchorFromText(normalized, path),
     position: path === "circle" ? positionFromText(normalized) : null,
     target: targetFromText(normalized)
@@ -561,11 +553,15 @@ function pathStrokeWidthFromText(text) {
 }
 
 function pathDistanceFromText(text) {
+  const gridDistance = gridDistanceFromText(text);
+  if (Number.isFinite(gridDistance)) return gridDistance;
   const fallback = /长/.test(text) ? 170 : /短/.test(text) ? 72 : 120;
   return numberFromText(text, fallback);
 }
 
 function pathRadiusFromText(text) {
+  const gridDistance = gridDistanceFromText(text);
+  if (Number.isFinite(gridDistance)) return gridDistance;
   const fallback = /大/.test(text) ? 72 : /小/.test(text) ? 38 : 54;
   return numberFromText(text, fallback);
 }
@@ -589,6 +585,8 @@ function pathAnchorFromText(text, path) {
 }
 
 function pathActionLabel(action) {
+  if (action.path === "circle" && action.radiusGridUnits) return `用画笔画半径 ${action.radiusGridUnits} 格的圆`;
+  if (action.gridUnits) return `从上下文位置向${directionLabel(action.direction)}画 ${action.gridUnits} 格${action.path === "curve" ? "曲线" : "直线"}`;
   if (action.path === "circle") return `用画笔画半径 ${action.radius} 的圆`;
   if (action.path === "curve") return `从上下文位置向${directionLabel(action.direction)}画一条曲线`;
   return `从上下文位置向${directionLabel(action.direction)}画一条直线`;
@@ -647,6 +645,7 @@ function turtleActionLabel(action) {
   if (action.type === "turtle_home") return "画笔回到中心，准备开始";
   if (action.type === "pen_down") return "落笔，开始留下线条";
   if (action.type === "pen_up") return "抬笔，结束这段路径";
+  if (action.type === "turtle_forward" && action.gridUnits) return `${action.distance >= 0 ? "前进" : "后退"} ${Math.abs(action.gridUnits)} 格`;
   if (action.type === "turtle_forward") return `${action.distance >= 0 ? "前进" : "后退"} ${Math.abs(action.distance)} 像素`;
   if (action.type === "turtle_turn") return `${action.angle >= 0 ? "右转" : "左转"} ${Math.abs(action.angle)} 度`;
   return "执行画笔动作";
@@ -671,12 +670,20 @@ function turtleCommandFromText(text) {
     return { actions: [{ type: "turtle_turn", angle }], plan: [`向右转 ${angle} 度`] };
   }
   if (/向后|后退|倒退/.test(normalized)) {
-    const distance = numberFromText(normalized, 80);
-    return { actions: [{ type: "turtle_forward", distance: -distance }], plan: [`向后退 ${distance} 像素`] };
+    const gridCount = gridCountFromText(normalized);
+    const distance = gridDistanceFromText(normalized) || numberFromText(normalized, 80);
+    return {
+      actions: [{ type: "turtle_forward", distance: -distance, gridUnits: gridCount }],
+      plan: [gridCount ? `向后退 ${gridCount} 格` : `向后退 ${distance} 像素`]
+    };
   }
   if (/向前|前进|往前|走/.test(normalized)) {
-    const distance = numberFromText(normalized, 80);
-    return { actions: [{ type: "turtle_forward", distance }], plan: [`向前走 ${distance} 像素`] };
+    const gridCount = gridCountFromText(normalized);
+    const distance = gridDistanceFromText(normalized) || numberFromText(normalized, 80);
+    return {
+      actions: [{ type: "turtle_forward", distance, gridUnits: gridCount }],
+      plan: [gridCount ? `向前走 ${gridCount} 格` : `向前走 ${distance} 像素`]
+    };
   }
   if (/换成|改成|颜色/.test(normalized) && hasColorWord(normalized) && (/画笔|线条|笔|海龟/.test(normalized) || !mentionsDrawableTarget)) {
     const color = palette[colorFromText(normalized, "black")];
@@ -861,10 +868,13 @@ function sanitizeAction(action) {
   }
 
   if (action.type === "turtle_forward") {
+    const gridUnits = Number(action.gridUnits);
     const distance = Number(action.distance);
+    const resolvedDistance = Number.isFinite(gridUnits) ? gridUnits * gridUnit : distance;
     return {
       type: "turtle_forward",
-      distance: Number.isFinite(distance) ? clamp(distance, -260, 260) : 80
+      distance: Number.isFinite(resolvedDistance) ? clamp(resolvedDistance, -260, 260) : 80,
+      gridUnits: Number.isFinite(gridUnits) ? clamp(gridUnits, -20, 20) : null
     };
   }
 
@@ -897,6 +907,8 @@ function sanitizeAction(action) {
 
   if (action.type === "draw_path") {
     const path = ["line", "curve", "circle"].includes(action.path) ? action.path : "line";
+    const gridUnits = Number(action.gridUnits);
+    const radiusGridUnits = Number(action.radiusGridUnits);
     const distance = Number(action.distance);
     const radius = Number(action.radius);
     const strokeWidth = Number(action.strokeWidth);
@@ -911,8 +923,10 @@ function sanitizeAction(action) {
       path,
       stroke: normalizeFill(action.stroke || action.fill, state.turtle.stroke),
       strokeWidth: Number.isFinite(strokeWidth) ? clamp(strokeWidth, 1, 14) : state.turtle.strokeWidth,
-      distance: Number.isFinite(distance) ? clamp(distance, 12, 320) : 120,
-      radius: Number.isFinite(radius) ? clamp(radius, 8, 150) : 54,
+      distance: Number.isFinite(gridUnits) ? clamp(gridUnits * gridUnit, 12, 320) : Number.isFinite(distance) ? clamp(distance, 12, 320) : 120,
+      radius: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits * gridUnit, 8, 150) : Number.isFinite(radius) ? clamp(radius, 8, 150) : 54,
+      gridUnits: Number.isFinite(gridUnits) ? clamp(gridUnits, 1, 20) : null,
+      radiusGridUnits: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits, 1, 10) : null,
       direction,
       anchor,
       target: supportedTargets.includes(action.target) ? action.target : "last_created",
@@ -1745,13 +1759,13 @@ function drawPaper(width, height) {
   ctx.fillRect(0, 0, width, height);
   ctx.strokeStyle = "rgba(148, 163, 184, 0.18)";
   ctx.lineWidth = 1;
-  for (let x = 0; x < width; x += 34) {
+  for (let x = 0; x < width; x += gridUnit) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
     ctx.lineTo(x, height);
     ctx.stroke();
   }
-  for (let y = 0; y < height; y += 34) {
+  for (let y = 0; y < height; y += gridUnit) {
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(width, y);
@@ -2288,7 +2302,6 @@ listenButton.addEventListener("click", async () => {
 
 window.addEventListener("resize", resizeCanvas);
 
-setupCommands();
 setupSpeech();
 resizeCanvas();
 updatePanels();
