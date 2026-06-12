@@ -46,15 +46,16 @@ const colorWords = [
 const demoCommands = [
   "画一只小猫",
   "画一辆小汽车",
+  "用画笔画一个正方形",
+  "用画笔画一个三角形",
   "落笔",
   "向前走一百",
   "向右转九十度",
   "换成红色",
   "画一个蓝色圆形放在中间",
-  "在 B2 画一个黄色圆形",
-  "把它移到 C3",
-  "隐藏坐标",
-  "显示坐标",
+  "把它移到右下角",
+  "隐藏网格",
+  "显示网格",
   "在它右边画一个红色三角形",
   "把圆形变大一点",
   "在右上角画一个太阳",
@@ -529,27 +530,100 @@ function catPlan() {
   const orange = "#fb923c";
   return {
     plan: [
-      "画一个圆形作为小猫的头",
-      "在头顶画两个三角形耳朵",
-      "画眼睛、鼻子和胡须",
-      "在下方画身体",
-      "在右侧画尾巴"
+      "先画身体和尾巴，确定整体姿态",
+      "在身体上方画头部和两只耳朵",
+      "把眼睛、鼻子和胡须放回头部范围内",
+      "补上脚掌，让小猫更像坐着的姿态"
     ],
     actions: [
-      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.5, y: 0.36 }, size: 120, label: "小猫头部" },
-      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.43, y: 0.25 }, size: 46, rotation: -18, label: "左耳" },
-      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.57, y: 0.25 }, size: 46, rotation: 18, label: "右耳" },
-      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.47, y: 0.35 }, size: 15, label: "左眼" },
-      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.53, y: 0.35 }, size: 15, label: "右眼" },
-      { type: "create_shape", shape: "triangle", fill: palette.pink, position: { x: 0.5, y: 0.39 }, size: 18, rotation: 180, label: "鼻子" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.42, y: 0.4 }, size: 46, rotation: -8, label: "左胡须" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.42, y: 0.43 }, size: 46, rotation: 8, label: "左胡须" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.58, y: 0.4 }, size: 46, rotation: 8, label: "右胡须" },
-      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.58, y: 0.43 }, size: 46, rotation: -8, label: "右胡须" },
-      { type: "create_shape", shape: "circle", fill: "#fdba74", position: { x: 0.5, y: 0.56 }, size: 100, label: "身体" },
-      { type: "create_shape", shape: "line", fill: orange, position: { x: 0.61, y: 0.54 }, size: 80, rotation: -35, label: "尾巴" }
+      { type: "create_shape", shape: "circle", fill: "#fdba74", position: { x: 0.5, y: 0.58 }, width: 128, height: 150, label: "身体" },
+      { type: "create_shape", shape: "line", fill: orange, position: { x: 0.62, y: 0.54 }, size: 92, rotation: -48, strokeWidth: 7, label: "尾巴" },
+      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.45, y: 0.33 }, width: 46, height: 58, rotation: -18, label: "左耳" },
+      { type: "create_shape", shape: "triangle", fill: orange, position: { x: 0.55, y: 0.33 }, width: 46, height: 58, rotation: 18, label: "右耳" },
+      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.5, y: 0.42 }, width: 118, height: 104, label: "小猫头部" },
+      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.47, y: 0.41 }, size: 13, label: "左眼" },
+      { type: "create_shape", shape: "circle", fill: palette.black, position: { x: 0.53, y: 0.41 }, size: 13, label: "右眼" },
+      { type: "create_shape", shape: "triangle", fill: palette.pink, position: { x: 0.5, y: 0.445 }, size: 16, rotation: 180, label: "鼻子" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.44, y: 0.45 }, size: 42, rotation: -10, strokeWidth: 2, label: "左胡须" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.44, y: 0.47 }, size: 42, rotation: 8, strokeWidth: 2, label: "左胡须" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.56, y: 0.45 }, size: 42, rotation: 10, strokeWidth: 2, label: "右胡须" },
+      { type: "create_shape", shape: "line", fill: palette.black, position: { x: 0.56, y: 0.47 }, size: 42, rotation: -8, strokeWidth: 2, label: "右胡须" },
+      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.46, y: 0.68 }, width: 36, height: 24, label: "左脚" },
+      { type: "create_shape", shape: "circle", fill: orange, position: { x: 0.54, y: 0.68 }, width: 36, height: 24, label: "右脚" }
     ]
   };
+}
+
+function turtlePathFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  const wantsTurtlePath = /海龟|画笔|路径|轮廓|一笔/.test(normalized);
+  if (!wantsTurtlePath) return null;
+
+  if (/正方形|方形|方块/.test(normalized)) {
+    return turtlePathPlan("用画笔画正方形", [
+      { type: "turtle_home" },
+      { type: "pen_down" },
+      { type: "turtle_forward", distance: 100 },
+      { type: "turtle_turn", angle: 90 },
+      { type: "turtle_forward", distance: 100 },
+      { type: "turtle_turn", angle: 90 },
+      { type: "turtle_forward", distance: 100 },
+      { type: "turtle_turn", angle: 90 },
+      { type: "turtle_forward", distance: 100 },
+      { type: "pen_up" }
+    ]);
+  }
+
+  if (/三角形|三角/.test(normalized)) {
+    return turtlePathPlan("用画笔画三角形", [
+      { type: "turtle_home" },
+      { type: "pen_down" },
+      { type: "turtle_forward", distance: 120 },
+      { type: "turtle_turn", angle: 120 },
+      { type: "turtle_forward", distance: 120 },
+      { type: "turtle_turn", angle: 120 },
+      { type: "turtle_forward", distance: 120 },
+      { type: "pen_up" }
+    ]);
+  }
+
+  if (/房子|小屋/.test(normalized)) {
+    return turtlePathPlan("用画笔画房子轮廓", [
+      { type: "turtle_home" },
+      { type: "pen_down" },
+      { type: "turtle_forward", distance: 120 },
+      { type: "turtle_turn", angle: 90 },
+      { type: "turtle_forward", distance: 90 },
+      { type: "turtle_turn", angle: 135 },
+      { type: "turtle_forward", distance: 85 },
+      { type: "turtle_turn", angle: 90 },
+      { type: "turtle_forward", distance: 85 },
+      { type: "turtle_turn", angle: 135 },
+      { type: "turtle_forward", distance: 90 },
+      { type: "turtle_turn", angle: 90 },
+      { type: "turtle_forward", distance: 120 },
+      { type: "pen_up" }
+    ]);
+  }
+
+  return null;
+}
+
+function turtlePathPlan(title, actions) {
+  return {
+    plan: actions.map((action) => turtleActionLabel(action)),
+    actions,
+    label: title
+  };
+}
+
+function turtleActionLabel(action) {
+  if (action.type === "turtle_home") return "画笔回到中心，准备开始";
+  if (action.type === "pen_down") return "落笔，开始留下线条";
+  if (action.type === "pen_up") return "抬笔，结束这段路径";
+  if (action.type === "turtle_forward") return `${action.distance >= 0 ? "前进" : "后退"} ${Math.abs(action.distance)} 像素`;
+  if (action.type === "turtle_turn") return `${action.angle >= 0 ? "右转" : "左转"} ${Math.abs(action.angle)} 度`;
+  return "执行画笔动作";
 }
 
 function carPlan() {
@@ -575,6 +649,9 @@ function carPlan() {
 
 function turtleCommandFromText(text) {
   const normalized = normalizeSpeechText(text);
+  const pathPlan = turtlePathFromText(normalized);
+  if (pathPlan) return pathPlan;
+  const mentionsDrawableTarget = /圆|矩形|方形|方块|三角|线|箭头|太阳|云|树|房|女孩|猫|汽车|小车|车子/.test(normalized);
 
   if (/落笔|下笔|开始画/.test(normalized)) return { actions: [{ type: "pen_down" }], plan: ["落下画笔，后续移动会留下线条"] };
   if (/抬笔|提笔|停止画/.test(normalized)) return { actions: [{ type: "pen_up" }], plan: ["抬起画笔，后续移动只改变画笔位置"] };
@@ -596,7 +673,7 @@ function turtleCommandFromText(text) {
     const distance = numberFromText(normalized, 80);
     return { actions: [{ type: "turtle_forward", distance }], plan: [`向前走 ${distance} 像素`] };
   }
-  if (/换成|改成|颜色/.test(normalized) && hasColorWord(normalized)) {
+  if (/换成|改成|颜色/.test(normalized) && hasColorWord(normalized) && (/画笔|线条|笔|海龟/.test(normalized) || !mentionsDrawableTarget)) {
     const color = palette[colorFromText(normalized, "black")];
     return { actions: [{ type: "turtle_color", stroke: color }], plan: ["更换画笔颜色"] };
   }
@@ -835,10 +912,12 @@ function sanitizeAction(action) {
       text: String(action.text || "").slice(0, 24),
       fill,
       stroke: shape === "line" || shape === "arrow" ? normalizeFill(action.stroke || action.fill, fill) : "#1f2937",
-      strokeWidth: 3,
+      strokeWidth: Number.isFinite(Number(action.strokeWidth)) ? clamp(Number(action.strokeWidth), 1, 14) : 3,
       position: sanitizePosition(action.position) || "center",
       relativeTo: sanitizeRelativeTo(action.relativeTo),
       size: Number.isFinite(size) ? clamp(size, 48, 260) : 120,
+      width: Number.isFinite(Number(action.width)) ? clamp(Number(action.width), 8, 280) : null,
+      height: Number.isFinite(Number(action.height)) ? clamp(Number(action.height), 8, 280) : null,
       rotation: Number.isFinite(Number(action.rotation)) ? clamp(Number(action.rotation), -360, 360) : 0,
       label: String(action.label || "").slice(0, 20),
       style: "cute_flat"
@@ -1211,9 +1290,11 @@ function executeTurtleAction(action) {
 
 function createShape(action) {
   const base = typeof action.size === "number" ? action.size : 120;
+  const width = typeof action.width === "number" ? action.width : base;
+  const height = typeof action.height === "number" ? action.height : base;
   const point = action.relativeTo
     ? resolveRelative(action.relativeTo, base)
-    : toPoint(action.position || "center", { width: base, height: base });
+    : toPoint(action.position || "center", { width, height });
 
   const object = {
     id: uid(action.shape),
@@ -1224,8 +1305,8 @@ function createShape(action) {
     text: action.text || "",
     x: point.x,
     y: point.y,
-    w: action.shape === "line" || action.shape === "arrow" ? base * 1.55 : base,
-    h: action.shape === "line" || action.shape === "arrow" ? 18 : base,
+    w: action.shape === "line" || action.shape === "arrow" ? base * 1.55 : width,
+    h: action.shape === "line" || action.shape === "arrow" ? 18 : height,
     fill: action.fill || palette.blue,
     stroke: action.stroke || (action.shape === "line" || action.shape === "arrow" ? action.fill : "#1f2937"),
     strokeWidth: action.strokeWidth || 3,
@@ -1428,52 +1509,10 @@ function drawCompositionGrid(width, height) {
   }
 
   ctx.setLineDash([]);
-  ctx.strokeStyle = "rgba(31, 41, 55, 0.28)";
+  ctx.strokeStyle = "rgba(31, 41, 55, 0.18)";
   ctx.lineWidth = 1;
   ctx.strokeRect(0.5, 0.5, Math.max(1, width - 1), Math.max(1, height - 1));
 
-  for (let col = 0; col < gridColumns.length; col += 1) {
-    drawGridBadge(gridColumns[col], col * colWidth + colWidth / 2, 17, "center");
-  }
-
-  for (let row = 0; row < gridRows.length; row += 1) {
-    drawGridBadge(gridRows[row], 17, row * rowHeight + rowHeight / 2, "center");
-  }
-
-  for (let row = 0; row < gridRows.length; row += 1) {
-    for (let col = 0; col < gridColumns.length; col += 1) {
-      drawGridBadge(
-        `${gridColumns[col]}${gridRows[row]}`,
-        col * colWidth + 18,
-        row * rowHeight + 34,
-        "left",
-        true
-      );
-    }
-  }
-
-  ctx.restore();
-}
-
-function drawGridBadge(label, x, y, align = "center", subtle = false) {
-  ctx.save();
-  ctx.font = "700 12px 'Segoe UI', sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  const width = ctx.measureText(label).width + 12;
-  const height = 22;
-  const left = align === "center" ? x - width / 2 : x;
-  const top = y - height / 2;
-
-  ctx.fillStyle = subtle ? "rgba(255, 255, 255, 0.48)" : "rgba(255, 255, 255, 0.82)";
-  ctx.strokeStyle = subtle ? "rgba(100, 116, 139, 0.16)" : "rgba(100, 116, 139, 0.26)";
-  ctx.lineWidth = 1;
-  roundedRect(left, top, width, height, 7);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = subtle ? "rgba(100, 116, 139, 0.66)" : "#475569";
-  ctx.fillText(label, left + width / 2, y + 0.5);
   ctx.restore();
 }
 

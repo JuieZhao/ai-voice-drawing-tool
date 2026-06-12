@@ -73,6 +73,7 @@ const commandSystemPrompt = `
 9. 如果无法映射到当前能力，返回简短 clarification。
 10. 用户要求“像海龟一样画、落笔、前进、转向、画笔颜色/粗细”时，使用 turtle actions。
 11. 用户要求画一个完整物体但没有现成组合对象时，先在 plan 里说明步骤，再拆成基础图形动作。
+12. create_shape 可以使用 width、height 和 strokeWidth 微调椭圆、扁圆、细线等部件。
 
 支持的 actions：
 - create_shape: shape 为 circle, rect, triangle, line, arrow, text
