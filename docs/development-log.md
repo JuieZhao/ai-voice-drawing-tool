@@ -48,6 +48,7 @@
 | 2026-06-12 | `feature/chrome-speech-recognition-stability` | PR `#5` | 抑制 SpeechRecognition network 错误后的自动重试刷屏 |
 | 2026-06-12 | `feature/deepseek-llm-parser` | PR `#6` | 增加 DeepSeek 可选复杂口令解析、本地 DSL 过滤和连接状态显示 |
 | 2026-06-12 | `feature/composition-grid-codes` | PR `#7` | 增加 A1-C3 坐标格、坐标显示/隐藏和坐标定位口令 |
+| 2026-06-12 | `feature/turtle-drawing-planner` | PR `#8` | 增加绘制步骤面板、规划对象和海龟式画笔控制 |
 
 所有已列 commit 均在本批次开始时间 2026-06-12 00:00 之后产生。
 
@@ -128,10 +129,10 @@ npm run check
 
 | PR | 分支建议 | 目标 | 验收标准 |
 | --- | --- | --- | --- |
-| PR 8 | `polish/composite-templates` | 组合对象美术打磨 | 太阳、云、树、房子、小女孩风格更统一 |
-| PR 9 | `feature/scene-layout` | 复杂场景生成 | 一句话生成小场景并自动布局 |
-| PR 10 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
-| PR 11 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 视频链接完整 |
+| PR 9 | `polish/composite-templates` | 组合对象美术打磨 | 太阳、云、树、房子、小女孩风格更统一 |
+| PR 10 | `feature/scene-layout` | 复杂场景生成 | 一句话生成小场景并自动布局 |
+| PR 11 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
+| PR 12 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 视频链接完整 |
 
 ## 7. 每个 PR 的固定检查清单
 
@@ -181,6 +182,11 @@ http://localhost:5173
 下面画一棵树
 左边画一座房子
 画一个小女孩
+画一只小猫
+画一辆小汽车
+落笔
+向前走一百
+向右转九十度
 ```
 
 最终场景目标：

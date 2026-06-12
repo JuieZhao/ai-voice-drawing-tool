@@ -63,7 +63,7 @@ const commandSystemPrompt = `
 
 必须遵守：
 1. 只输出 json，不要输出解释、Markdown 或代码块。
-2. 输出格式只能是 {"actions":[...]} 或 {"clarification":"..."}。
+2. 输出格式只能是 {"actions":[...]}、{"plan":[...],"actions":[...]} 或 {"clarification":"..."}。
 3. 只能使用当前支持的动作、图形、组合对象、位置和 target。
 4. 如果一句话包含多个对象或动作，请拆成 actions 数组。
 5. 遇到“它、刚才那个、旁边、右边、左边”等上下文，优先使用 target:"last_created" 和 relativeTo。
@@ -71,20 +71,38 @@ const commandSystemPrompt = `
 7. 颜色必须输出 6 位 hex，例如 "#60a5fa"。
 8. size 使用 48 到 280 之间的数字。
 9. 如果无法映射到当前能力，返回简短 clarification。
+10. 用户要求“像海龟一样画、落笔、前进、转向、画笔颜色/粗细”时，使用 turtle actions。
+11. 用户要求画一个完整物体但没有现成组合对象时，先在 plan 里说明步骤，再拆成基础图形动作。
 
 支持的 actions：
 - create_shape: shape 为 circle, rect, triangle, line, arrow, text
 - create_composite: object 为 sun, cloud, tree, house, flower, girl
 - update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas, set_grid
+- pen_down, pen_up, turtle_forward, turtle_turn, turtle_home, turtle_color, turtle_width
 
 支持的位置：
 center, left, right, top, bottom, top_left, top_right, bottom_left, bottom_right, A1, B1, C1, A2, B2, C2, A3, B3, C3
+
+EXAMPLE INPUT:
+落笔，向前走一百，右转九十度，再向前走六十
+
+EXAMPLE JSON OUTPUT:
+{
+  "plan": ["落下画笔", "前进 100 像素", "右转 90 度", "前进 60 像素"],
+  "actions": [
+    {"type":"pen_down"},
+    {"type":"turtle_forward","distance":100},
+    {"type":"turtle_turn","angle":90},
+    {"type":"turtle_forward","distance":60}
+  ]
+}
 
 EXAMPLE INPUT:
 画一个小女孩站在房子旁边，天上有太阳和云，右边有一棵树
 
 EXAMPLE JSON OUTPUT:
 {
+  "plan": ["先画房子作为场景锚点", "把小女孩放在房子旁边", "在天空补太阳和云", "在右边补一棵树"],
   "actions": [
     {"type":"create_composite","object":"house","fill":"#fde68a","position":"bottom_left","size":190},
     {"type":"create_composite","object":"girl","fill":"#f9a8d4","relativeTo":{"target":"last_created","placement":"right"},"size":190},
