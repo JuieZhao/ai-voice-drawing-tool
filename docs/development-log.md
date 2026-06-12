@@ -49,7 +49,7 @@
 | 2026-06-12 | `feature/deepseek-llm-parser` | PR `#6` | 增加 DeepSeek 可选复杂口令解析、本地 DSL 过滤和连接状态显示 |
 | 2026-06-12 | `feature/composition-grid-codes` | PR `#7` | 增加 A1-C3 坐标格、坐标显示/隐藏和坐标定位口令 |
 | 2026-06-12 | `feature/turtle-drawing-planner` | PR `#8` | 增加绘制步骤面板、规划对象和海龟式画笔控制 |
-| 2026-06-12 | `fix/cat-layout-and-turtle-paths` | PR `#9` | 优化小猫构图、去掉网格标签，并让规划对象按画笔游标逐步绘制 |
+| 2026-06-12 | `fix/cat-layout-and-turtle-paths` | PR `#9` | 去掉组合模板路线，改为路径笔画、曲线/圆和上下文继续绘制 |
 
 所有已列 commit 均在本批次开始时间 2026-06-12 00:00 之后产生。
 
@@ -130,10 +130,10 @@ npm run check
 
 | PR | 分支建议 | 目标 | 验收标准 |
 | --- | --- | --- | --- |
-| PR 9 | `polish/composite-templates` | 组合对象美术打磨 | 太阳、云、树、房子、小女孩风格更统一 |
-| PR 10 | `feature/scene-layout` | 复杂场景生成 | 一句话生成小场景并自动布局 |
-| PR 11 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
-| PR 12 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 视频链接完整 |
+| PR 10 | `feature/path-context` | 路径上下文增强 | 稳定支持上一笔、末端、左侧、右侧等引用 |
+| PR 11 | `feature/curve-tools` | 曲线工具增强 | 支持贝塞尔曲线、圆弧和路径闭合 |
+| PR 12 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
+| PR 13 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 视频链接完整 |
 
 ## 7. 每个 PR 的固定检查清单
 
@@ -175,16 +175,13 @@ http://localhost:5173
 撤销上一步
 ```
 
-组合对象：
+路径笔画与上下文：
 
 ```text
-在右上角画一个太阳
-画两朵云
-下面画一棵树
-左边画一座房子
-画一个小女孩
-画一只小猫
-画一辆小汽车
+向右画一条直线
+接着向下画一条曲线
+在末端画一个圆
+从刚才的圆右边继续画直线
 用画笔画一个正方形
 用画笔画一个三角形
 落笔
@@ -195,5 +192,5 @@ http://localhost:5173
 最终场景目标：
 
 ```text
-画一个小女孩站在房子旁边，天上有太阳和云，右边有一棵树
+向右画一条直线，接着向下画一条曲线，再在末端画一个圆
 ```
