@@ -44,6 +44,7 @@
 | 2026-06-12 | `docs/complete-delivery-documentation` | `d50a715` | 补完整持续交付记录、PR 模板和指令验收脚本 |
 | 2026-06-12 | `docs/complete-delivery-documentation` | PR `#2` | 合入完整持续交付文档 |
 | 2026-06-12 | `docs/submission-compliance` | PR `#3` | 补齐提交规则、依赖、原创说明、Demo 占位和提交检查清单 |
+| 2026-06-12 | `feature/composition-grid-codes` | 待创建 PR | 增加 A1-C3 坐标格、坐标显示/隐藏和坐标定位口令 |
 
 所有已列 commit 均在本批次开始时间 2026-06-12 00:00 之后产生。
 
@@ -125,10 +126,11 @@ npm run check
 | PR | 分支建议 | 目标 | 验收标准 |
 | --- | --- | --- | --- |
 | PR 4 | `feature/command-parser-v2` | 指令解析增强 | 多段语音指令、相对位置、对象引用更稳定 |
-| PR 5 | `polish/composite-templates` | 组合对象美术打磨 | 太阳、云、树、房子、小女孩风格更统一 |
-| PR 6 | `feature/scene-layout` | 复杂场景生成 | 一句话生成小场景并自动布局 |
-| PR 7 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
-| PR 8 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 视频链接完整 |
+| PR 5 | `feature/composition-grid-codes` | 坐标格定位 | A1-C3 坐标格可见，支持在 B2 创建、移动到 C3 |
+| PR 6 | `polish/composite-templates` | 组合对象美术打磨 | 太阳、云、树、房子、小女孩风格更统一 |
+| PR 7 | `feature/scene-layout` | 复杂场景生成 | 一句话生成小场景并自动布局 |
+| PR 8 | `feature/export-artwork` | 导出作品 | 支持导出 PNG，便于演示成果 |
+| PR 9 | `release/submission-docs` | 提交材料整理 | README、DESIGN、Demo 视频链接完整 |
 
 ## 7. 每个 PR 的固定检查清单
 
