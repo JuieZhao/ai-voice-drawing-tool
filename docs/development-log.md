@@ -49,7 +49,8 @@
 | 2026-06-12 | `feature/deepseek-llm-parser` | PR `#6` | 增加 DeepSeek 可选复杂口令解析、本地 DSL 过滤和连接状态显示 |
 | 2026-06-12 | `feature/composition-grid-codes` | PR `#7` | 增加 A1-C3 坐标格、坐标显示/隐藏和坐标定位口令 |
 | 2026-06-12 | `feature/turtle-drawing-planner` | PR `#8` | 增加绘制步骤面板、规划对象和海龟式画笔控制 |
-| 2026-06-12 | `fix/cat-layout-and-turtle-paths` | PR `#9` | 去掉组合模板和推荐口令，改为路径笔画、按格距离和上下文继续绘制 |
+| 2026-06-13 | `fix/cat-layout-and-turtle-paths` | PR `#10` | 去掉组合模板和推荐口令，改为路径笔画、按格距离和上下文继续绘制 |
+| 2026-06-13 | `fix/cat-layout-and-turtle-paths` | PR `#11` | 增加指针移动口令，让后续绘图从新指针位置开始 |
 
 所有已列 commit 均在本批次开始时间 2026-06-12 00:00 之后产生。
 

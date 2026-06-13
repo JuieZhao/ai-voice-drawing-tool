@@ -51,6 +51,7 @@ const supportedTargets = ["last_created", ...supportedShapes, "stroke"];
 const supportedPositions = ["center", "left", "right", "top", "bottom", "top_left", "top_right", "bottom_left", "bottom_right", ...gridCells];
 const supportedPlacements = ["left", "right", "top", "bottom"];
 const supportedActions = [
+  "move_cursor",
   "draw_path",
   "create_shape",
   "update_object",
@@ -514,6 +515,36 @@ function plannedObjectFromText(text) {
   return null;
 }
 
+function cursorCommandFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  const mentionsCursor = /指针|光标|笔尖/.test(normalized) || (/画笔/.test(normalized) && /移动|移到|挪到|放到/.test(normalized));
+  if (!mentionsCursor) return null;
+  if (!/移动|移到|挪到|放到|回到|向|往|走/.test(normalized)) return null;
+
+  const gridCount = gridCountFromText(normalized);
+  const wantsAbsolute = /移到|移动到|挪到|放到|回到/.test(normalized) || Boolean(gridCellFromText(normalized));
+  const position = wantsAbsolute ? positionFromText(normalized) : null;
+  const distance = position ? null : gridDistanceFromText(normalized) || numberFromText(normalized, gridUnit);
+  const action = {
+    type: "move_cursor",
+    direction: position ? null : directionFromText(normalized),
+    distance,
+    gridUnits: position ? null : gridCount,
+    position
+  };
+
+  return {
+    plan: [cursorActionLabel(action)],
+    actions: [action]
+  };
+}
+
+function cursorActionLabel(action) {
+  if (action.position) return "把指针移动到指定位置";
+  if (action.gridUnits) return `指针向${directionLabel(action.direction)}移动 ${action.gridUnits} 格`;
+  return `指针向${directionLabel(action.direction)}移动 ${action.distance} 像素`;
+}
+
 function pathCommandFromText(text) {
   const normalized = normalizeSpeechText(text);
   if (/改成|变成|换成|变大|放大|变小|缩小|移动|移到|放到|挪到|删除|去掉|移除/.test(normalized)) {
@@ -570,6 +601,7 @@ function directionFromText(text) {
   if (/向左|往左|左边|左/.test(text)) return "left";
   if (/向上|往上|上面|上/.test(text)) return "up";
   if (/向下|往下|下面|下/.test(text)) return "down";
+  if (/向前|往前|前进/.test(text)) return "forward";
   if (/竖线/.test(text)) return "down";
   return "right";
 }
@@ -593,7 +625,7 @@ function pathActionLabel(action) {
 }
 
 function directionLabel(direction) {
-  const labels = { left: "左", right: "右", up: "上", down: "下" };
+  const labels = { left: "左", right: "右", up: "上", down: "下", forward: "前" };
   return labels[direction] || "右";
 }
 
@@ -701,6 +733,7 @@ function turtleCommandFromText(text) {
 function parseCommand(text) {
   const normalized = normalizeSpeechText(text);
   const actions = [];
+  const hasSegmentBreak = /然后|再|并且|，|,|。|；|;/.test(String(text || ""));
 
   if (/撤销|退回|上一步/.test(normalized)) {
     return { actions: [{ type: "undo" }] };
@@ -718,6 +751,9 @@ function parseCommand(text) {
     return { actions: [{ type: "set_grid", visible: false }] };
   }
 
+  const cursorCommand = cursorCommandFromText(normalized);
+  if (cursorCommand && !hasSegmentBreak) return cursorCommand;
+
   const turtleCommand = turtleCommandFromText(normalized);
   if (turtleCommand) return turtleCommand;
 
@@ -734,6 +770,18 @@ function parseCommand(text) {
     .filter(Boolean);
 
   for (const segment of segments) {
+    const segmentCursorCommand = cursorCommandFromText(segment);
+    if (segmentCursorCommand) {
+      actions.push(...segmentCursorCommand.actions);
+      continue;
+    }
+
+    const segmentPathCommand = pathCommandFromText(segment);
+    if (segmentPathCommand) {
+      actions.push(...segmentPathCommand.actions);
+      continue;
+    }
+
     if (/改成|变成|换成/.test(segment)) {
       actions.push({
         type: "update_object",
@@ -822,6 +870,7 @@ function shouldUseLlm(text, localDsl) {
   if (state.llmInFlight || state.llmAvailable === false) return false;
   if (localDsl?.skipLlm) return false;
   if (Array.isArray(localDsl?.plan) && localDsl.plan.length) return false;
+  if (isExecutableDsl(localDsl) && localDsl.actions.every((action) => ["move_cursor", "draw_path"].includes(action.type))) return false;
   const normalized = normalizeSpeechText(text);
   if (localDsl?.clarification) return true;
   if (llmComplexPattern.test(normalized)) return true;
@@ -903,6 +952,22 @@ function sanitizeAction(action) {
 
   if (action.type === "set_grid") {
     return { type: "set_grid", visible: action.visible !== false };
+  }
+
+  if (action.type === "move_cursor") {
+    const gridUnits = Number(action.gridUnits);
+    const distance = Number(action.distance);
+    const direction = ["left", "right", "up", "down", "forward"].includes(action.direction)
+      ? action.direction
+      : "right";
+    const position = sanitizePosition(action.position);
+    return {
+      type: "move_cursor",
+      direction,
+      distance: position ? null : Number.isFinite(gridUnits) ? clamp(gridUnits * gridUnit, 1, 320) : Number.isFinite(distance) ? clamp(distance, 1, 320) : gridUnit,
+      gridUnits: position ? null : Number.isFinite(gridUnits) ? clamp(gridUnits, 1, 20) : null,
+      position
+    };
   }
 
   if (action.type === "draw_path") {
@@ -1149,7 +1214,9 @@ async function executeDsl(dsl) {
       if (shouldAnimate) {
         await moveDrawingCursorToAction(action);
       }
-      if (action.type === "draw_path") {
+      if (action.type === "move_cursor") {
+        await executeAnimatedCursorMoveAction(action);
+      } else if (action.type === "draw_path") {
         await executeAnimatedPathAction(action);
       } else {
         executeAction(action);
@@ -1262,6 +1329,12 @@ function executeAction(action) {
     addLog(`${state.compositionGridVisible ? "显示" : "隐藏"}坐标网格`);
     return;
   }
+  if (action.type === "move_cursor") {
+    pushHistory();
+    executeCursorMove(action);
+    state.actionTotal += 1;
+    return;
+  }
 
   pushHistory();
 
@@ -1280,6 +1353,65 @@ function executeAction(action) {
   }
 
   state.actionTotal += 1;
+}
+
+async function executeAnimatedCursorMoveAction(action) {
+  pushHistory();
+  const from = { x: state.turtle.x, y: state.turtle.y };
+  const to = cursorTargetPoint(action);
+  const steps = 14;
+
+  for (let i = 1; i <= steps; i += 1) {
+    const progress = i / steps;
+    const eased = 1 - (1 - progress) ** 3;
+    state.turtle.x = from.x + (to.x - from.x) * eased;
+    state.turtle.y = from.y + (to.y - from.y) * eased;
+    draw();
+    await wait(12);
+  }
+
+  state.turtle.x = to.x;
+  state.turtle.y = to.y;
+  state.actionTotal += 1;
+  addLog(cursorMoveLog(action));
+}
+
+function executeCursorMove(action) {
+  const to = cursorTargetPoint(action);
+  state.turtle.x = to.x;
+  state.turtle.y = to.y;
+  addLog(cursorMoveLog(action));
+}
+
+function cursorTargetPoint(action) {
+  const { width, height } = canvasSize();
+  if (action.position) {
+    const point = toPoint(action.position, { width: 20, height: 20 });
+    return {
+      x: clamp(point.x / Math.max(1, width), 0.04, 0.96),
+      y: clamp(point.y / Math.max(1, height), 0.04, 0.96)
+    };
+  }
+
+  const distance = Number(action.distance) || gridUnit;
+  const vectors = {
+    left: [-1, 0],
+    right: [1, 0],
+    up: [0, -1],
+    down: [0, 1],
+    forward: [Math.cos((state.turtle.angle * Math.PI) / 180), Math.sin((state.turtle.angle * Math.PI) / 180)]
+  };
+  const [dx, dy] = vectors[action.direction] || vectors.right;
+  return {
+    x: clamp(state.turtle.x + (dx * distance) / Math.max(1, width), 0.04, 0.96),
+    y: clamp(state.turtle.y + (dy * distance) / Math.max(1, height), 0.04, 0.96)
+  };
+}
+
+function cursorMoveLog(action) {
+  if (action.position) return "移动指针到指定位置";
+  if (action.gridUnits) return `指针向${directionLabel(action.direction)}移动${action.gridUnits}格`;
+  return `指针向${directionLabel(action.direction)}移动${Math.round(action.distance || gridUnit)}像素`;
 }
 
 function executeTurtleAction(action) {
@@ -2318,6 +2450,7 @@ window.__voiceDrawTest = {
   pick: pickBestTranscript,
   getState: () => ({
     objects: state.objects,
+    turtle: state.turtle,
     actionTotal: state.actionTotal,
     latestDsl: state.latestDsl
   })
