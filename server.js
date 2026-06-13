@@ -76,8 +76,10 @@ const commandSystemPrompt = `
 12. draw_path 用于一笔一笔画：path 为 line、curve、circle，可设置 direction、distance、radius、anchor。
 13. create_shape 只用于必要的基础图形，不用于太阳、云、树、房子、小女孩等模板对象。
 14. 画布细网格是距离单位，1 格 = 34 像素。用户说“五格长”时优先输出 gridUnits:5，而不是 distance:5。
+15. 用户要求“指针/光标/笔尖移动”时，使用 move_cursor。move_cursor 只移动起笔点，不留下线条；后续 draw_path 默认从 cursor 开始。
 
 支持的 actions：
+- move_cursor: direction 为 left, right, up, down, forward；可用 gridUnits 表示移动几格，也可用 position 移到固定位置
 - draw_path: path 为 line, curve, circle；direction 为 left, right, up, down, forward；anchor 为 cursor, last_end, center, left, right, top, bottom；可用 gridUnits 表示直线/曲线长度，用 radiusGridUnits 表示圆半径
 - create_shape: shape 为 circle, rect, triangle, line, arrow, text
 - update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas, set_grid
@@ -110,6 +112,18 @@ EXAMPLE JSON OUTPUT:
     {"type":"draw_path","path":"line","direction":"right","gridUnits":4,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
     {"type":"draw_path","path":"curve","direction":"down","distance":100,"anchor":"last_end","stroke":"#1f2937","strokeWidth":4},
     {"type":"draw_path","path":"circle","radius":42,"anchor":"last_end","stroke":"#1f2937","strokeWidth":4}
+  ]
+}
+
+EXAMPLE INPUT:
+指针向下移动五格，然后向右画一条三格长的直线
+
+EXAMPLE JSON OUTPUT:
+{
+  "plan": ["指针向下移动 5 格", "从指针位置向右画 3 格直线"],
+  "actions": [
+    {"type":"move_cursor","direction":"down","gridUnits":5},
+    {"type":"draw_path","path":"line","direction":"right","gridUnits":3,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4}
   ]
 }
 `.trim();
