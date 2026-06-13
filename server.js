@@ -77,23 +77,25 @@ const commandSystemPrompt = `
 13. create_shape 只用于必要的基础图形，不用于太阳、云、树、房子、小女孩等模板对象。
 14. 画布细网格是距离单位，1 格 = 34 像素。用户说“五格长”时优先输出 gridUnits:5，而不是 distance:5。
 15. 用户要求“指针/光标/笔尖移动”时，使用 move_cursor。move_cursor 只移动起笔点，不留下线条；后续 draw_path 默认从 cursor 开始。
+16. 指针有方向：0 度向右，顺时针为正角度。用户说“顺时针旋转45度/逆时针旋转15度/向右转90度”时输出 turtle_turn。direction:"forward" 必须沿当前指针方向移动或绘制。
 
 支持的 actions：
 - move_cursor: direction 为 left, right, up, down, forward；可用 gridUnits 表示移动几格，也可用 position 移到固定位置
-- draw_path: path 为 line, curve, circle；direction 为 left, right, up, down, forward；anchor 为 cursor, last_end, center, left, right, top, bottom；可用 gridUnits 表示直线/曲线长度，用 radiusGridUnits 表示圆半径
+- draw_path: path 为 line, curve, circle；direction 为 left, right, up, down, forward；forward 会沿当前指针朝向；anchor 为 cursor, last_end, center, left, right, top, bottom；可用 gridUnits 表示直线/曲线长度，用 radiusGridUnits 表示圆半径
 - create_shape: shape 为 circle, rect, triangle, line, arrow, text
 - update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas, set_grid
 - pen_down, pen_up, turtle_forward, turtle_turn, turtle_home, turtle_color, turtle_width
+- turtle_turn: angle 为正数表示顺时针旋转，负数表示逆时针旋转
 
 支持的位置：
 center, left, right, top, bottom, top_left, top_right, bottom_left, bottom_right, A1, B1, C1, A2, B2, C2, A3, B3, C3
 
 EXAMPLE INPUT:
-落笔，向前走一百，右转九十度，再向前走六十
+落笔，向前走一百，顺时针旋转九十度，再向前走六十
 
 EXAMPLE JSON OUTPUT:
 {
-  "plan": ["落下画笔", "前进 100 像素", "右转 90 度", "前进 60 像素"],
+  "plan": ["落下画笔", "前进 100 像素", "顺时针旋转 90 度", "前进 60 像素"],
   "actions": [
     {"type":"pen_down"},
     {"type":"turtle_forward","distance":100},
@@ -124,6 +126,18 @@ EXAMPLE JSON OUTPUT:
   "actions": [
     {"type":"move_cursor","direction":"down","gridUnits":5},
     {"type":"draw_path","path":"line","direction":"right","gridUnits":3,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4}
+  ]
+}
+
+EXAMPLE INPUT:
+顺时针旋转45度，然后向前画五格
+
+EXAMPLE JSON OUTPUT:
+{
+  "plan": ["指针顺时针旋转 45 度", "沿当前朝向向前画 5 格直线"],
+  "actions": [
+    {"type":"turtle_turn","angle":45},
+    {"type":"draw_path","path":"line","direction":"forward","gridUnits":5,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4}
   ]
 }
 `.trim();

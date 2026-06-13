@@ -50,7 +50,7 @@
 | 2026-06-12 | `feature/composition-grid-codes` | PR `#7` | 增加 A1-C3 坐标格、坐标显示/隐藏和坐标定位口令 |
 | 2026-06-12 | `feature/turtle-drawing-planner` | PR `#8` | 增加绘制步骤面板、规划对象和海龟式画笔控制 |
 | 2026-06-13 | `fix/cat-layout-and-turtle-paths` | PR `#10` | 去掉组合模板和推荐口令，改为路径笔画、按格距离和上下文继续绘制 |
-| 2026-06-13 | `fix/cat-layout-and-turtle-paths` | PR `#11` | 增加指针移动口令，让后续绘图从新指针位置开始 |
+| 2026-06-13 | `fix/cat-layout-and-turtle-paths` | PR `#11` | 增加指针移动和旋转口令，让后续绘图从新指针位置与朝向开始 |
 
 所有已列 commit 均在本批次开始时间 2026-06-12 00:00 之后产生。
 
@@ -187,7 +187,7 @@ http://localhost:5173
 用画笔画一个三角形
 落笔
 向前走一百
-向右转九十度
+顺时针旋转九十度
 ```
 
 最终场景目标：

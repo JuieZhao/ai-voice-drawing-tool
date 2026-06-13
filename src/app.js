@@ -9,6 +9,7 @@ const layerList = document.querySelector("#layerList");
 const dslOutput = document.querySelector("#dslOutput");
 const objectCount = document.querySelector("#objectCount");
 const actionCount = document.querySelector("#actionCount");
+const headingValue = document.querySelector("#headingValue");
 const planList = document.querySelector("#planList");
 
 const palette = {
@@ -422,7 +423,7 @@ function pathKindFromText(text) {
   if (/曲线|弧线|弯线|弯曲/.test(normalized)) return "curve";
   if (/圆|圈/.test(normalized)) return "circle";
   if (/直线|横线|竖线|线段|一条线|画线/.test(normalized)) return "line";
-  if (gridCountFromText(normalized) && /向|往|画/.test(normalized)) return "line";
+  if (gridCountFromText(normalized) && /画/.test(normalized)) return "line";
   return null;
 }
 
@@ -445,14 +446,6 @@ function numberFromText(text, fallback = null) {
   const digits = { 零: 0, 一: 1, 幺: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
   if (normalized.includes("一百")) return 100;
   if (normalized.includes("两百") || normalized.includes("二百")) return 200;
-  if (normalized.includes("九十")) return 90;
-  if (normalized.includes("八十")) return 80;
-  if (normalized.includes("七十")) return 70;
-  if (normalized.includes("六十")) return 60;
-  if (normalized.includes("五十")) return 50;
-  if (normalized.includes("四十")) return 40;
-  if (normalized.includes("三十")) return 30;
-  if (normalized.includes("二十") || normalized.includes("两十")) return 20;
   if (normalized.includes("十")) {
     const match = normalized.match(/([一二两三四五六七八九])?十([一二两三四五六七八九])?/);
     if (match) {
@@ -545,6 +538,24 @@ function cursorActionLabel(action) {
   return `指针向${directionLabel(action.direction)}移动 ${action.distance} 像素`;
 }
 
+function turnCommandFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  const mentionsTurn = /旋转|转动|转向|转/.test(normalized);
+  if (!mentionsTurn) return null;
+
+  const clockwise = /顺时针|右转|向右转/.test(normalized);
+  const counterClockwise = /逆时针|左转|向左转/.test(normalized);
+  const mentionsCursor = /指针|光标|笔尖|画笔|海龟/.test(normalized);
+  if (!clockwise && !counterClockwise && !mentionsCursor) return null;
+
+  const angle = numberFromText(normalized, 90);
+  const signedAngle = counterClockwise ? -angle : angle;
+  return {
+    plan: [turnActionLabel(signedAngle)],
+    actions: [{ type: "turtle_turn", angle: signedAngle }]
+  };
+}
+
 function pathCommandFromText(text) {
   const normalized = normalizeSpeechText(text);
   if (/改成|变成|换成|变大|放大|变小|缩小|移动|移到|放到|挪到|删除|去掉|移除/.test(normalized)) {
@@ -629,6 +640,30 @@ function directionLabel(direction) {
   return labels[direction] || "右";
 }
 
+function normalizeAngle(angle) {
+  return ((angle % 360) + 360) % 360;
+}
+
+function headingLabel(angle = state.turtle.angle) {
+  return `${Math.round(normalizeAngle(angle) * 10) / 10}°`;
+}
+
+function turnActionLabel(angle) {
+  return `${angle >= 0 ? "顺时针旋转" : "逆时针旋转"} ${Math.abs(angle)} 度`;
+}
+
+function directionVector(direction) {
+  const angle = (state.turtle.angle * Math.PI) / 180;
+  const vectors = {
+    left: [-1, 0],
+    right: [1, 0],
+    up: [0, -1],
+    down: [0, 1],
+    forward: [Math.cos(angle), Math.sin(angle)]
+  };
+  return vectors[direction] || vectors.right;
+}
+
 function turtlePathFromText(text) {
   const normalized = normalizeSpeechText(text);
   const wantsTurtlePath = /海龟|画笔|路径|轮廓|一笔/.test(normalized);
@@ -679,7 +714,7 @@ function turtleActionLabel(action) {
   if (action.type === "pen_up") return "抬笔，结束这段路径";
   if (action.type === "turtle_forward" && action.gridUnits) return `${action.distance >= 0 ? "前进" : "后退"} ${Math.abs(action.gridUnits)} 格`;
   if (action.type === "turtle_forward") return `${action.distance >= 0 ? "前进" : "后退"} ${Math.abs(action.distance)} 像素`;
-  if (action.type === "turtle_turn") return `${action.angle >= 0 ? "右转" : "左转"} ${Math.abs(action.angle)} 度`;
+  if (action.type === "turtle_turn") return turnActionLabel(action.angle);
   return "执行画笔动作";
 }
 
@@ -693,14 +728,9 @@ function turtleCommandFromText(text) {
   if (/抬笔|提笔|停止画/.test(normalized)) return { actions: [{ type: "pen_up" }], plan: ["抬起画笔，后续移动只改变画笔位置"] };
   if (/回到中心|回中心|回原点|回到原点/.test(normalized)) return { actions: [{ type: "turtle_home" }], plan: ["把画笔移动回画布中心"] };
 
-  if (/左转|向左转/.test(normalized)) {
-    const angle = numberFromText(normalized, 90);
-    return { actions: [{ type: "turtle_turn", angle: -angle }], plan: [`向左转 ${angle} 度`] };
-  }
-  if (/右转|向右转/.test(normalized)) {
-    const angle = numberFromText(normalized, 90);
-    return { actions: [{ type: "turtle_turn", angle }], plan: [`向右转 ${angle} 度`] };
-  }
+  const turnCommand = turnCommandFromText(normalized);
+  if (turnCommand) return turnCommand;
+
   if (/向后|后退|倒退/.test(normalized)) {
     const gridCount = gridCountFromText(normalized);
     const distance = gridDistanceFromText(normalized) || numberFromText(normalized, 80);
@@ -733,6 +763,7 @@ function turtleCommandFromText(text) {
 function parseCommand(text) {
   const normalized = normalizeSpeechText(text);
   const actions = [];
+  const plans = [];
   const hasSegmentBreak = /然后|再|并且|，|,|。|；|;/.test(String(text || ""));
 
   if (/撤销|退回|上一步/.test(normalized)) {
@@ -754,11 +785,11 @@ function parseCommand(text) {
   const cursorCommand = cursorCommandFromText(normalized);
   if (cursorCommand && !hasSegmentBreak) return cursorCommand;
 
-  const turtleCommand = turtleCommandFromText(normalized);
-  if (turtleCommand) return turtleCommand;
-
   const pathCommand = pathCommandFromText(normalized);
-  if (pathCommand) return pathCommand;
+  if (pathCommand && !hasSegmentBreak) return pathCommand;
+
+  const turtleCommand = turtleCommandFromText(normalized);
+  if (turtleCommand && !hasSegmentBreak) return turtleCommand;
 
   const plannedObject = plannedObjectFromText(normalized);
   if (plannedObject) return plannedObject;
@@ -773,12 +804,21 @@ function parseCommand(text) {
     const segmentCursorCommand = cursorCommandFromText(segment);
     if (segmentCursorCommand) {
       actions.push(...segmentCursorCommand.actions);
+      plans.push(...(segmentCursorCommand.plan || []));
       continue;
     }
 
     const segmentPathCommand = pathCommandFromText(segment);
     if (segmentPathCommand) {
       actions.push(...segmentPathCommand.actions);
+      plans.push(...(segmentPathCommand.plan || []));
+      continue;
+    }
+
+    const segmentTurtleCommand = turtleCommandFromText(segment);
+    if (segmentTurtleCommand) {
+      actions.push(...segmentTurtleCommand.actions);
+      plans.push(...(segmentTurtleCommand.plan || []));
       continue;
     }
 
@@ -859,7 +899,7 @@ function parseCommand(text) {
     };
   }
 
-  return { actions };
+  return plans.length ? { actions, plan: plans } : { actions };
 }
 
 function isExecutableDsl(dsl) {
@@ -1216,6 +1256,8 @@ async function executeDsl(dsl) {
       }
       if (action.type === "move_cursor") {
         await executeAnimatedCursorMoveAction(action);
+      } else if (action.type === "turtle_turn") {
+        await executeAnimatedTurtleTurnAction(action);
       } else if (action.type === "draw_path") {
         await executeAnimatedPathAction(action);
       } else {
@@ -1376,6 +1418,24 @@ async function executeAnimatedCursorMoveAction(action) {
   addLog(cursorMoveLog(action));
 }
 
+async function executeAnimatedTurtleTurnAction(action) {
+  pushHistory();
+  const from = state.turtle.angle;
+  const steps = 12;
+
+  for (let i = 1; i <= steps; i += 1) {
+    const progress = i / steps;
+    const eased = 1 - (1 - progress) ** 3;
+    state.turtle.angle = normalizeAngle(from + action.angle * eased);
+    draw();
+    await wait(10);
+  }
+
+  state.turtle.angle = normalizeAngle(from + action.angle);
+  state.actionTotal += 1;
+  addLog(turnActionLabel(action.angle));
+}
+
 function executeCursorMove(action) {
   const to = cursorTargetPoint(action);
   state.turtle.x = to.x;
@@ -1394,14 +1454,7 @@ function cursorTargetPoint(action) {
   }
 
   const distance = Number(action.distance) || gridUnit;
-  const vectors = {
-    left: [-1, 0],
-    right: [1, 0],
-    up: [0, -1],
-    down: [0, 1],
-    forward: [Math.cos((state.turtle.angle * Math.PI) / 180), Math.sin((state.turtle.angle * Math.PI) / 180)]
-  };
-  const [dx, dy] = vectors[action.direction] || vectors.right;
+  const [dx, dy] = directionVector(action.direction);
   return {
     x: clamp(state.turtle.x + (dx * distance) / Math.max(1, width), 0.04, 0.96),
     y: clamp(state.turtle.y + (dy * distance) / Math.max(1, height), 0.04, 0.96)
@@ -1428,8 +1481,8 @@ function executeTurtleAction(action) {
   }
 
   if (action.type === "turtle_turn") {
-    state.turtle.angle = (state.turtle.angle + action.angle + 360) % 360;
-    addLog(`${action.angle >= 0 ? "右转" : "左转"}${Math.abs(action.angle)}度`);
+    state.turtle.angle = normalizeAngle(state.turtle.angle + action.angle);
+    addLog(turnActionLabel(action.angle));
     return;
   }
 
@@ -1456,11 +1509,11 @@ function executeTurtleAction(action) {
   if (action.type === "turtle_forward") {
     const { width, height } = canvasSize();
     const distance = Number(action.distance) || 80;
-    const angle = (state.turtle.angle * Math.PI) / 180;
+    const [dx, dy] = directionVector("forward");
     const from = { x: state.turtle.x, y: state.turtle.y };
     const to = {
-      x: clamp(from.x + (Math.cos(angle) * distance) / Math.max(1, width), 0.04, 0.96),
-      y: clamp(from.y + (Math.sin(angle) * distance) / Math.max(1, height), 0.04, 0.96)
+      x: clamp(from.x + (dx * distance) / Math.max(1, width), 0.04, 0.96),
+      y: clamp(from.y + (dy * distance) / Math.max(1, height), 0.04, 0.96)
     };
 
     if (state.turtle.penDown) {
@@ -1657,14 +1710,7 @@ function targetAnchorPoint(target, anchor) {
 function pathEndPoint(start, action) {
   const { width, height } = canvasSize();
   const distance = action.distance || 120;
-  const vectors = {
-    left: [-1, 0],
-    right: [1, 0],
-    up: [0, -1],
-    down: [0, 1],
-    forward: [Math.cos((state.turtle.angle * Math.PI) / 180), Math.sin((state.turtle.angle * Math.PI) / 180)]
-  };
-  const [dx, dy] = vectors[action.direction] || vectors.right;
+  const [dx, dy] = directionVector(action.direction);
   return {
     x: clamp(start.x + dx * distance, 20, width - 20),
     y: clamp(start.y + dy * distance, 20, height - 20)
@@ -1687,9 +1733,8 @@ function curvePoints(start, end, action) {
   const direction = action.direction || "right";
   const distance = Math.max(24, action.distance || 120);
   const bend = Math.min(90, Math.max(28, distance * 0.42));
-  const perpendicular = direction === "left" || direction === "right"
-    ? { x: 0, y: -bend }
-    : { x: bend, y: 0 };
+  const [dx, dy] = directionVector(direction);
+  const perpendicular = { x: -dy * bend, y: dx * bend };
   const control = {
     x: (start.x + end.x) / 2 + perpendicular.x,
     y: (start.y + end.y) / 2 + perpendicular.y
@@ -2131,6 +2176,7 @@ function displayObjectLabel(object) {
 function updatePanels() {
   objectCount.textContent = String(state.objects.length);
   actionCount.textContent = String(state.actionTotal);
+  if (headingValue) headingValue.textContent = headingLabel();
   layerList.innerHTML = "";
   planList.innerHTML = "";
 
