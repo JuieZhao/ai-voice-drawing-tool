@@ -54,7 +54,6 @@ const supportedPlacements = ["left", "right", "top", "bottom"];
 const supportedActions = [
   "move_cursor",
   "draw_path",
-  "create_shape",
   "update_object",
   "resize_object",
   "move_object",
@@ -176,7 +175,7 @@ function commandScore(text) {
 
   if (!normalized) return score;
   if (/画|写|放|在|把|改|变|移|撤销|重做|清空|删除/.test(normalized)) score += 2;
-  if (shapeFromText(normalized)) score += 8;
+  if (shapeFromText(normalized) || basicShapeSketchPlanFromText(normalized)) score += 8;
   if (pathKindFromText(normalized)) score += 8;
   if (hasColorWord(normalized)) score += 3;
   if (positionFromText(normalized)) score += 3;
@@ -501,11 +500,83 @@ function plannedObjectFromText(text) {
   const normalized = normalizeSpeechText(text);
   if (/猫|小猫|猫咪|汽车|小车|车子|轿车|太阳|云|树|房子|房屋|小屋|女孩|小女孩|花/.test(normalized)) {
     return {
-      clarification: "现在先不使用模板。请用“画直线、画曲线、画圆、从上一笔继续”这样的步骤来描述。",
-      skipLlm: true
+      clarification: "这个物体需要拆成基础笔画。请让 DeepSeek 生成可执行绘图步骤。"
     };
   }
   return null;
+}
+
+function basicShapeSketchPlanFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  const stroke = palette[colorFromText(normalized, "black")] || state.turtle.stroke;
+  const strokeWidth = pathStrokeWidthFromText(normalized);
+  const gridUnits = gridCountFromText(normalized) || 4;
+  const line = (units) => ({
+    type: "draw_path",
+    path: "line",
+    direction: "forward",
+    gridUnits: units,
+    anchor: "cursor",
+    stroke,
+    strokeWidth
+  });
+  const turn = (angle) => ({ type: "turtle_turn", angle });
+
+  if (/三角形|三角/.test(normalized)) {
+    return {
+      plan: [`用 3 条边画三角形，每条边 ${gridUnits} 格`, "每条边后顺时针旋转 120 度"],
+      actions: [line(gridUnits), turn(120), line(gridUnits), turn(120), line(gridUnits), turn(120)],
+      label: "三角形笔画配方"
+    };
+  }
+
+  if (/正方形|方块|方形/.test(normalized)) {
+    return {
+      plan: [`用 4 条边画正方形，每条边 ${gridUnits} 格`, "每条边后顺时针旋转 90 度"],
+      actions: [line(gridUnits), turn(90), line(gridUnits), turn(90), line(gridUnits), turn(90), line(gridUnits), turn(90)],
+      label: "正方形笔画配方"
+    };
+  }
+
+  if (/矩形|长方形|举行|巨型/.test(normalized)) {
+    const shortSide = Math.max(1, Math.round(gridUnits * 0.62));
+    return {
+      plan: [`用路径画矩形：长边 ${gridUnits} 格，短边 ${shortSide} 格`, "每条边后顺时针旋转 90 度"],
+      actions: [line(gridUnits), turn(90), line(shortSide), turn(90), line(gridUnits), turn(90), line(shortSide), turn(90)],
+      label: "矩形笔画配方"
+    };
+  }
+
+  return null;
+}
+
+function starPlanFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  if (!/五角星|星星|五芒星/.test(normalized)) return null;
+
+  const gridUnits = gridCountFromText(normalized) || 5;
+  const actions = [];
+  for (let i = 0; i < 5; i += 1) {
+    actions.push({
+      type: "draw_path",
+      path: "line",
+      direction: "forward",
+      gridUnits,
+      anchor: "cursor",
+      stroke: state.turtle.stroke,
+      strokeWidth: state.turtle.strokeWidth
+    });
+    actions.push({ type: "turtle_turn", angle: 144 });
+  }
+
+  return {
+    plan: [
+      `画五角星：每条边 ${gridUnits} 格`,
+      "重复 5 次：向前画一条边，再顺时针旋转 144 度"
+    ],
+    actions,
+    label: "五角星动作配方"
+  };
 }
 
 function cursorCommandFromText(text) {
@@ -629,6 +700,7 @@ function pathAnchorFromText(text, path) {
 
 function pathActionLabel(action) {
   if (action.path === "circle" && action.radiusGridUnits) return `用画笔画半径 ${action.radiusGridUnits} 格的圆`;
+  if (hasActionAngle(action)) return `从上下文位置按 ${action.angle} 度画${action.path === "curve" ? "曲线" : "直线"}`;
   if (action.gridUnits) return `从上下文位置向${directionLabel(action.direction)}画 ${action.gridUnits} 格${action.path === "curve" ? "曲线" : "直线"}`;
   if (action.path === "circle") return `用画笔画半径 ${action.radius} 的圆`;
   if (action.path === "curve") return `从上下文位置向${directionLabel(action.direction)}画一条曲线`;
@@ -638,6 +710,15 @@ function pathActionLabel(action) {
 function directionLabel(direction) {
   const labels = { left: "左", right: "右", up: "上", down: "下", forward: "前" };
   return labels[direction] || "右";
+}
+
+function vectorFromAngle(angle) {
+  const radians = (angle * Math.PI) / 180;
+  return [Math.cos(radians), Math.sin(radians)];
+}
+
+function hasActionAngle(action) {
+  return typeof action?.angle === "number" && Number.isFinite(action.angle);
 }
 
 function normalizeAngle(angle) {
@@ -653,19 +734,24 @@ function turnActionLabel(angle) {
 }
 
 function directionVector(direction) {
-  const angle = (state.turtle.angle * Math.PI) / 180;
   const vectors = {
     left: [-1, 0],
     right: [1, 0],
     up: [0, -1],
     down: [0, 1],
-    forward: [Math.cos(angle), Math.sin(angle)]
+    forward: vectorFromAngle(state.turtle.angle)
   };
   return vectors[direction] || vectors.right;
 }
 
 function turtlePathFromText(text) {
   const normalized = normalizeSpeechText(text);
+  const basicShapePlan = basicShapeSketchPlanFromText(normalized);
+  if (basicShapePlan) return basicShapePlan;
+
+  const starPlan = starPlanFromText(normalized);
+  if (starPlan) return starPlan;
+
   const wantsTurtlePath = /海龟|画笔|路径|轮廓|一笔/.test(normalized);
   if (!wantsTurtlePath) return null;
 
@@ -765,6 +851,7 @@ function parseCommand(text) {
   const actions = [];
   const plans = [];
   const hasSegmentBreak = /然后|再|并且|，|,|。|；|;/.test(String(text || ""));
+  const hasSequencingBreak = /然后|再|并且/.test(String(text || ""));
 
   if (/撤销|退回|上一步/.test(normalized)) {
     return { actions: [{ type: "undo" }] };
@@ -784,6 +871,12 @@ function parseCommand(text) {
 
   const cursorCommand = cursorCommandFromText(normalized);
   if (cursorCommand && !hasSegmentBreak) return cursorCommand;
+
+  const basicShapePlan = basicShapeSketchPlanFromText(normalized);
+  if (basicShapePlan && !hasSequencingBreak) return basicShapePlan;
+
+  const starPlan = starPlanFromText(normalized);
+  if (starPlan && !hasSequencingBreak) return starPlan;
 
   const pathCommand = pathCommandFromText(normalized);
   if (pathCommand && !hasSegmentBreak) return pathCommand;
@@ -805,6 +898,20 @@ function parseCommand(text) {
     if (segmentCursorCommand) {
       actions.push(...segmentCursorCommand.actions);
       plans.push(...(segmentCursorCommand.plan || []));
+      continue;
+    }
+
+    const segmentBasicShapePlan = basicShapeSketchPlanFromText(segment);
+    if (segmentBasicShapePlan) {
+      actions.push(...segmentBasicShapePlan.actions);
+      plans.push(...(segmentBasicShapePlan.plan || []));
+      continue;
+    }
+
+    const segmentStarPlan = starPlanFromText(segment);
+    if (segmentStarPlan) {
+      actions.push(...segmentStarPlan.actions);
+      plans.push(...(segmentStarPlan.plan || []));
       continue;
     }
 
@@ -858,38 +965,13 @@ function parseCommand(text) {
     }
 
     if (/写|文字|文本/.test(segment)) {
-      const content = segment.match(/(?:写上|写|文字|文本)(.+)/)?.[1] || "Voice";
-      actions.push({
-        type: "create_shape",
-        shape: "text",
-        text: content.replace(/放在|放到|在.+/, ""),
-        fill: palette[colorFromText(segment, "black")],
-        position: positionFromText(segment) || "center",
-        size: "medium"
-      });
       continue;
     }
 
-    const shape = shapeFromText(segment);
-    const count = countFromText(segment);
-    const position = positionFromText(segment);
-    const placement = relativePlacement(segment);
-    const fill = palette[colorFromText(segment, "blue")];
-
-    if (shape) {
-      for (let i = 0; i < count; i += 1) {
-        actions.push({
-          type: "create_shape",
-          shape,
-          fill,
-          stroke: "#1f2937",
-          strokeWidth: 3,
-          position: position || defaultShapePosition(i, count),
-          relativeTo: !position && placement ? { target: "last_created", placement } : null,
-          size: sizeFromText(segment, 120),
-          style: "cute_flat"
-        });
-      }
+    const basicShapePlan = basicShapeSketchPlanFromText(segment);
+    if (basicShapePlan) {
+      actions.push(...basicShapePlan.actions);
+      plans.push(...(basicShapePlan.plan || []));
     }
   }
 
@@ -1023,6 +1105,7 @@ function sanitizeAction(action) {
     const direction = ["left", "right", "up", "down", "forward"].includes(action.direction)
       ? action.direction
       : "right";
+    const angle = Number(action.angle);
     return {
       type: "draw_path",
       path,
@@ -1033,6 +1116,7 @@ function sanitizeAction(action) {
       gridUnits: Number.isFinite(gridUnits) ? clamp(gridUnits, 1, 20) : null,
       radiusGridUnits: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits, 1, 10) : null,
       direction,
+      angle: Number.isFinite(angle) ? clamp(angle, -360, 360) : null,
       anchor,
       target: supportedTargets.includes(action.target) ? action.target : "last_created",
       position: sanitizePosition(action.position)
@@ -1240,9 +1324,12 @@ async function executeDsl(dsl) {
   state.latestPlan = Array.isArray(dsl.plan) ? dsl.plan : [];
   dslOutput.textContent = JSON.stringify(dsl, null, 2);
 
-  const actions = Array.isArray(dsl.actions) ? dsl.actions : [];
+  const hadTemplateAction = Array.isArray(dsl.actions) && dsl.actions.some((action) => action?.type === "create_shape");
+  const actions = Array.isArray(dsl.actions)
+    ? dsl.actions.filter((action) => action?.type !== "create_shape")
+    : [];
   if (!actions.length) {
-    addLog("没有可执行的绘图动作", "error");
+    addLog(hadTemplateAction ? "已拒绝形状模板动作，请改用路径笔画规划。" : "没有可执行的绘图动作", "error");
     return;
   }
 
@@ -1285,7 +1372,7 @@ function shouldAnimateDrawing(dsl) {
   const actions = Array.isArray(dsl.actions) ? dsl.actions : [];
   if (actions.length < 2) return false;
   if (!Array.isArray(dsl.plan) || !dsl.plan.length) return false;
-  return actions.some((action) => action.type === "draw_path" || action.type === "create_shape");
+  return actions.some((action) => action.type === "draw_path");
 }
 
 async function moveDrawingCursorToAction(action) {
@@ -1317,18 +1404,7 @@ function actionPreviewPoint(action) {
   if (action.type === "draw_path") {
     return normalizedPathPreviewPoint(action);
   }
-  if (action.type !== "create_shape") return null;
-  const base = typeof action.size === "number" ? action.size : 120;
-  const width = typeof action.width === "number" ? action.width : base;
-  const height = typeof action.height === "number" ? action.height : base;
-  const point = action.relativeTo
-    ? resolveRelative(action.relativeTo, base)
-    : toPoint(action.position || "center", { width, height });
-  const { width: canvasWidth, height: canvasHeight } = canvasSize();
-  return {
-    x: clamp(point.x / Math.max(1, canvasWidth), 0.03, 0.97),
-    y: clamp(point.y / Math.max(1, canvasHeight), 0.03, 0.97)
-  };
+  return null;
 }
 
 function executeAction(action) {
@@ -1710,7 +1786,7 @@ function targetAnchorPoint(target, anchor) {
 function pathEndPoint(start, action) {
   const { width, height } = canvasSize();
   const distance = action.distance || 120;
-  const [dx, dy] = directionVector(action.direction);
+  const [dx, dy] = hasActionAngle(action) ? vectorFromAngle(action.angle) : directionVector(action.direction);
   return {
     x: clamp(start.x + dx * distance, 20, width - 20),
     y: clamp(start.y + dy * distance, 20, height - 20)
@@ -1733,7 +1809,7 @@ function curvePoints(start, end, action) {
   const direction = action.direction || "right";
   const distance = Math.max(24, action.distance || 120);
   const bend = Math.min(90, Math.max(28, distance * 0.42));
-  const [dx, dy] = directionVector(direction);
+  const [dx, dy] = hasActionAngle(action) ? vectorFromAngle(action.angle) : directionVector(direction);
   const perpendicular = { x: -dy * bend, y: dx * bend };
   const control = {
     x: (start.x + end.x) / 2 + perpendicular.x,
