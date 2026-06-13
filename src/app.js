@@ -283,7 +283,6 @@ function startSilenceTimer() {
   state.silenceTimer = window.setTimeout(() => {
     if (state.listening && !state.speechStarted) {
       setSpeechHint("还没有识别到声音。请确认浏览器允许麦克风、系统输入设备正确，并尽量使用 Chrome 打开 http://localhost:5173。", "warning");
-      addLog("监听中，但暂未识别到语音", "error");
     }
   }, 7000);
 }
@@ -2383,8 +2382,11 @@ function setupSpeech() {
   };
   recognition.onerror = (event) => {
     const message = speechErrorMessage(event.error);
-    setSpeechHint(message, "error");
-    addLog(message, "error");
+    const isIdleNoSpeech = event.error === "no-speech";
+    setSpeechHint(message, isIdleNoSpeech ? "warning" : "error");
+    if (!isIdleNoSpeech) {
+      addLog(message, "error");
+    }
     state.recognitionActive = false;
     clearSilenceTimer();
     clearResultTimer();
