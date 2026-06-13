@@ -54,7 +54,6 @@ const supportedPlacements = ["left", "right", "top", "bottom"];
 const supportedActions = [
   "move_cursor",
   "draw_path",
-  "create_shape",
   "update_object",
   "resize_object",
   "move_object",
@@ -176,7 +175,7 @@ function commandScore(text) {
 
   if (!normalized) return score;
   if (/画|写|放|在|把|改|变|移|撤销|重做|清空|删除/.test(normalized)) score += 2;
-  if (shapeFromText(normalized)) score += 8;
+  if (shapeFromText(normalized) || basicShapeSketchPlanFromText(normalized) || objectSketchRecipeFromText(normalized)) score += 8;
   if (pathKindFromText(normalized)) score += 8;
   if (hasColorWord(normalized)) score += 3;
   if (positionFromText(normalized)) score += 3;
@@ -498,13 +497,336 @@ function relativePlacement(text) {
 
 function plannedObjectFromText(text) {
   const normalized = normalizeSpeechText(text);
-  if (/猫|小猫|猫咪|汽车|小车|车子|轿车|太阳|云|树|房子|房屋|小屋|女孩|小女孩|花/.test(normalized)) {
+  if (/汽车|小车|车子|轿车|太阳|云|女孩|小女孩/.test(normalized)) {
     return {
-      clarification: "现在先不使用模板。请用“画直线、画曲线、画圆、从上一笔继续”这样的步骤来描述。",
+      clarification: "当前演示版先支持五角星、三角形、矩形、小猫、小狗、小房子、小花和小树等运笔配方。",
       skipLlm: true
     };
   }
   return null;
+}
+
+function basicShapeSketchPlanFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  const stroke = palette[colorFromText(normalized, "black")] || state.turtle.stroke;
+  const strokeWidth = pathStrokeWidthFromText(normalized);
+  const gridUnits = gridCountFromText(normalized) || 4;
+  const line = (units) => ({
+    type: "draw_path",
+    path: "line",
+    direction: "forward",
+    gridUnits: units,
+    anchor: "cursor",
+    stroke,
+    strokeWidth
+  });
+  const turn = (angle) => ({ type: "turtle_turn", angle });
+
+  if (/三角形|三角/.test(normalized)) {
+    return {
+      plan: [`用 3 条边画三角形，每条边 ${gridUnits} 格`, "每条边后顺时针旋转 120 度"],
+      actions: [line(gridUnits), turn(120), line(gridUnits), turn(120), line(gridUnits), turn(120)],
+      label: "三角形笔画配方"
+    };
+  }
+
+  if (/正方形|方块|方形/.test(normalized)) {
+    return {
+      plan: [`用 4 条边画正方形，每条边 ${gridUnits} 格`, "每条边后顺时针旋转 90 度"],
+      actions: [line(gridUnits), turn(90), line(gridUnits), turn(90), line(gridUnits), turn(90), line(gridUnits), turn(90)],
+      label: "正方形笔画配方"
+    };
+  }
+
+  if (/矩形|长方形|举行|巨型/.test(normalized)) {
+    const shortSide = Math.max(1, Math.round(gridUnits * 0.62));
+    return {
+      plan: [`用路径画矩形：长边 ${gridUnits} 格，短边 ${shortSide} 格`, "每条边后顺时针旋转 90 度"],
+      actions: [line(gridUnits), turn(90), line(shortSide), turn(90), line(gridUnits), turn(90), line(shortSide), turn(90)],
+      label: "矩形笔画配方"
+    };
+  }
+
+  return null;
+}
+
+function starPlanFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  if (!/五角星|星星|五芒星/.test(normalized)) return null;
+
+  const gridUnits = gridCountFromText(normalized) || 5;
+  const actions = [];
+  for (let i = 0; i < 5; i += 1) {
+    actions.push({
+      type: "draw_path",
+      path: "line",
+      direction: "forward",
+      gridUnits,
+      anchor: "cursor",
+      stroke: state.turtle.stroke,
+      strokeWidth: state.turtle.strokeWidth
+    });
+    actions.push({ type: "turtle_turn", angle: 144 });
+  }
+
+  return {
+    plan: [
+      `画五角星：每条边 ${gridUnits} 格`,
+      "重复 5 次：向前画一条边，再顺时针旋转 144 度"
+    ],
+    actions,
+    label: "五角星动作配方"
+  };
+}
+
+function objectSketchRecipeFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  if (/狗|小狗|狗狗|小犬/.test(normalized)) return dogSketchRecipeFromText(normalized);
+  if (/猫|小猫|猫咪/.test(normalized)) return catSketchRecipeFromText(normalized);
+  if (/房子|房屋|小屋|屋子|小房子/.test(normalized)) return houseSketchRecipeFromText(normalized);
+  if (/花|小花|花朵/.test(normalized)) return flowerSketchRecipeFromText(normalized);
+  if (/树|小树|树木/.test(normalized)) return treeSketchRecipeFromText(normalized);
+  return null;
+}
+
+function recipeCenterFromText(text) {
+  const position = positionFromText(text);
+  if (typeof position === "object" && position !== null) return position;
+
+  const cell = String(position || "").toUpperCase().match(/^([ABC])([123])$/);
+  if (cell) {
+    return {
+      x: (gridColumns.indexOf(cell[1]) + 0.5) / gridColumns.length,
+      y: (gridRows.indexOf(cell[2]) + 0.5) / gridRows.length
+    };
+  }
+
+  const map = {
+    center: { x: 0.5, y: 0.54 },
+    left: { x: 0.31, y: 0.54 },
+    right: { x: 0.69, y: 0.54 },
+    top: { x: 0.5, y: 0.32 },
+    bottom: { x: 0.5, y: 0.72 },
+    top_left: { x: 0.31, y: 0.32 },
+    top_right: { x: 0.69, y: 0.32 },
+    bottom_left: { x: 0.31, y: 0.72 },
+    bottom_right: { x: 0.69, y: 0.72 }
+  };
+  return map[position] || map.center;
+}
+
+function recipeScaleFromText(text) {
+  const gridUnits = gridCountFromText(text);
+  if (Number.isFinite(gridUnits)) return clamp(gridUnits / 5, 0.72, 1.45);
+  if (/很大/.test(text)) return 1.32;
+  if (/大/.test(text)) return 1.16;
+  if (/很小/.test(text)) return 0.76;
+  if (/小/.test(text)) return 0.9;
+  return 1;
+}
+
+function roundPoint(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+function sketchTools(text, fallbackColor = "black") {
+  const normalized = normalizeSpeechText(text);
+  const { width, height } = canvasSize();
+  const center = recipeCenterFromText(normalized);
+  const scale = recipeScaleFromText(normalized);
+  const primary = palette[colorFromText(normalized, fallbackColor)] || state.turtle.stroke;
+  const strokeWidth = pathStrokeWidthFromText(normalized);
+  const point = (dx = 0, dy = 0) => ({
+    x: roundPoint(clamp(center.x + (dx * scale) / Math.max(1, width), 0.06, 0.94)),
+    y: roundPoint(clamp(center.y + (dy * scale) / Math.max(1, height), 0.08, 0.92))
+  });
+  const move = (dx, dy) => ({ type: "move_cursor", position: point(dx, dy) });
+  const line = (angle, distance, stroke = primary, widthOverride = strokeWidth) => ({
+    type: "draw_path",
+    path: "line",
+    angle,
+    distance: Math.round(distance * scale),
+    anchor: "cursor",
+    stroke,
+    strokeWidth: widthOverride
+  });
+  const curve = (angle, distance, stroke = primary, widthOverride = strokeWidth) => ({
+    type: "draw_path",
+    path: "curve",
+    angle,
+    distance: Math.round(distance * scale),
+    anchor: "cursor",
+    stroke,
+    strokeWidth: widthOverride
+  });
+  const circle = (dx, dy, radius, stroke = primary, widthOverride = strokeWidth) => ({
+    type: "draw_path",
+    path: "circle",
+    position: point(dx, dy),
+    radius: Math.round(radius * scale),
+    stroke,
+    strokeWidth: widthOverride
+  });
+  return { primary, strokeWidth, move, line, curve, circle };
+}
+
+function catSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "black");
+  const detail = palette.black;
+  const accent = palette.pink;
+  return {
+    label: "小猫运笔配方",
+    plan: [
+      "先画小猫的圆头和身体",
+      "用三角线条画两只耳朵",
+      "补上眼睛、鼻子、胡须和尾巴"
+    ],
+    actions: [
+      tools.circle(0, -50, 42),
+      tools.circle(0, 32, 54),
+      tools.move(-34, -82),
+      tools.line(-118, 36),
+      tools.line(58, 36),
+      tools.line(180, 34),
+      tools.move(34, -82),
+      tools.line(-62, 36),
+      tools.line(122, 36),
+      tools.line(0, 34),
+      tools.circle(-15, -54, 8, detail, 3),
+      tools.circle(15, -54, 8, detail, 3),
+      tools.circle(0, -37, 8, accent, 3),
+      tools.move(-10, -30),
+      tools.curve(145, 34, detail, 3),
+      tools.move(10, -30),
+      tools.curve(35, 34, detail, 3),
+      tools.move(-13, -36),
+      tools.line(180, 42, detail, 3),
+      tools.move(-13, -31),
+      tools.line(162, 42, detail, 3),
+      tools.move(13, -36),
+      tools.line(0, 42, detail, 3),
+      tools.move(13, -31),
+      tools.line(18, 42, detail, 3),
+      tools.move(42, 40),
+      tools.curve(-42, 66)
+    ]
+  };
+}
+
+function dogSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "brown");
+  const detail = palette.black;
+  return {
+    label: "小狗运笔配方",
+    plan: [
+      "先画小狗的身体和圆头",
+      "画下垂耳朵、鼻子和眼睛",
+      "用短线补腿，再用曲线画尾巴"
+    ],
+    actions: [
+      tools.circle(25, 18, 54),
+      tools.circle(-48, -32, 36),
+      tools.circle(-76, -29, 23),
+      tools.circle(-20, -22, 20),
+      tools.circle(-58, -43, 7, detail, 3),
+      tools.circle(-10, -23, 7, detail, 3),
+      tools.move(-72, -16),
+      tools.curve(170, 34, detail, 3),
+      tools.move(2, 65),
+      tools.line(90, 36),
+      tools.move(43, 65),
+      tools.line(90, 36),
+      tools.move(76, 0),
+      tools.curve(-38, 58),
+      tools.move(-19, -9),
+      tools.curve(38, 32, detail, 3)
+    ]
+  };
+}
+
+function houseSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "brown");
+  const roof = palette.orange;
+  const detail = palette.black;
+  return {
+    label: "小房子运笔配方",
+    plan: [
+      "先用四条线画墙体",
+      "再用两条斜线画屋顶",
+      "最后补门和窗户"
+    ],
+    actions: [
+      tools.move(-82, -8),
+      tools.line(0, 164),
+      tools.line(90, 118),
+      tools.line(180, 164),
+      tools.line(-90, 118),
+      tools.move(-96, -8),
+      tools.line(-35, 116, roof),
+      tools.line(35, 116, roof),
+      tools.move(-24, 54),
+      tools.line(90, 72, detail, 3),
+      tools.line(0, 48, detail, 3),
+      tools.line(-90, 72, detail, 3),
+      tools.move(38, 26),
+      tools.line(0, 42, detail, 3),
+      tools.line(90, 42, detail, 3),
+      tools.line(180, 42, detail, 3),
+      tools.line(-90, 42, detail, 3)
+    ]
+  };
+}
+
+function flowerSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "pink");
+  const stem = palette.green;
+  const center = palette.yellow;
+  return {
+    label: "小花运笔配方",
+    plan: [
+      "用多个小圆画花瓣",
+      "画花心",
+      "向下画花茎和叶子"
+    ],
+    actions: [
+      tools.circle(0, -54, 18),
+      tools.circle(26, -28, 18),
+      tools.circle(0, -2, 18),
+      tools.circle(-26, -28, 18),
+      tools.circle(0, -28, 12, center, 3),
+      tools.move(0, -8),
+      tools.line(90, 104, stem, 4),
+      tools.move(0, 42),
+      tools.curve(38, 48, stem, 4),
+      tools.move(0, 55),
+      tools.curve(142, 48, stem, 4)
+    ]
+  };
+}
+
+function treeSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "green");
+  const trunk = palette.brown;
+  return {
+    label: "小树运笔配方",
+    plan: [
+      "先画树冠的几个圆形轮廓",
+      "再画树干",
+      "补一条地面线让小树站住"
+    ],
+    actions: [
+      tools.circle(-34, -42, 36),
+      tools.circle(24, -55, 42),
+      tools.circle(45, -16, 36),
+      tools.circle(-12, -8, 42),
+      tools.move(-18, 25),
+      tools.line(90, 92, trunk, 5),
+      tools.move(18, 25),
+      tools.line(90, 92, trunk, 5),
+      tools.move(-52, 118),
+      tools.line(0, 104, trunk, 4)
+    ]
+  };
 }
 
 function cursorCommandFromText(text) {
@@ -628,6 +950,7 @@ function pathAnchorFromText(text, path) {
 
 function pathActionLabel(action) {
   if (action.path === "circle" && action.radiusGridUnits) return `用画笔画半径 ${action.radiusGridUnits} 格的圆`;
+  if (hasActionAngle(action)) return `从上下文位置按 ${action.angle} 度画${action.path === "curve" ? "曲线" : "直线"}`;
   if (action.gridUnits) return `从上下文位置向${directionLabel(action.direction)}画 ${action.gridUnits} 格${action.path === "curve" ? "曲线" : "直线"}`;
   if (action.path === "circle") return `用画笔画半径 ${action.radius} 的圆`;
   if (action.path === "curve") return `从上下文位置向${directionLabel(action.direction)}画一条曲线`;
@@ -637,6 +960,15 @@ function pathActionLabel(action) {
 function directionLabel(direction) {
   const labels = { left: "左", right: "右", up: "上", down: "下", forward: "前" };
   return labels[direction] || "右";
+}
+
+function vectorFromAngle(angle) {
+  const radians = (angle * Math.PI) / 180;
+  return [Math.cos(radians), Math.sin(radians)];
+}
+
+function hasActionAngle(action) {
+  return typeof action?.angle === "number" && Number.isFinite(action.angle);
 }
 
 function normalizeAngle(angle) {
@@ -652,19 +984,27 @@ function turnActionLabel(angle) {
 }
 
 function directionVector(direction) {
-  const angle = (state.turtle.angle * Math.PI) / 180;
   const vectors = {
     left: [-1, 0],
     right: [1, 0],
     up: [0, -1],
     down: [0, 1],
-    forward: [Math.cos(angle), Math.sin(angle)]
+    forward: vectorFromAngle(state.turtle.angle)
   };
   return vectors[direction] || vectors.right;
 }
 
 function turtlePathFromText(text) {
   const normalized = normalizeSpeechText(text);
+  const basicShapePlan = basicShapeSketchPlanFromText(normalized);
+  if (basicShapePlan) return basicShapePlan;
+
+  const starPlan = starPlanFromText(normalized);
+  if (starPlan) return starPlan;
+
+  const objectRecipe = objectSketchRecipeFromText(normalized);
+  if (objectRecipe) return objectRecipe;
+
   const wantsTurtlePath = /海龟|画笔|路径|轮廓|一笔/.test(normalized);
   if (!wantsTurtlePath) return null;
 
@@ -763,7 +1103,8 @@ function parseCommand(text) {
   const normalized = normalizeSpeechText(text);
   const actions = [];
   const plans = [];
-  const hasSegmentBreak = /然后|再|并且|，|,|。|；|;/.test(String(text || ""));
+  const hasSegmentBreak = /然后|再|并且|同时|一起|还有|和|，|,|。|；|;/.test(String(text || ""));
+  const hasSequencingBreak = /然后|再|并且|同时|一起|还有|和/.test(String(text || ""));
 
   if (/撤销|退回|上一步/.test(normalized)) {
     return { actions: [{ type: "undo" }] };
@@ -784,6 +1125,15 @@ function parseCommand(text) {
   const cursorCommand = cursorCommandFromText(normalized);
   if (cursorCommand && !hasSegmentBreak) return cursorCommand;
 
+  const basicShapePlan = basicShapeSketchPlanFromText(normalized);
+  if (basicShapePlan && !hasSequencingBreak) return basicShapePlan;
+
+  const starPlan = starPlanFromText(normalized);
+  if (starPlan && !hasSequencingBreak) return starPlan;
+
+  const objectRecipe = objectSketchRecipeFromText(normalized);
+  if (objectRecipe && !hasSequencingBreak) return objectRecipe;
+
   const pathCommand = pathCommandFromText(normalized);
   if (pathCommand && !hasSegmentBreak) return pathCommand;
 
@@ -795,7 +1145,7 @@ function parseCommand(text) {
 
   const segments = String(text || "")
     .toLowerCase()
-    .split(/然后|再|并且|，|,|。|；|;/)
+    .split(/然后|再|并且|同时|一起|还有|和|，|,|。|；|;/)
     .map((part) => normalizeSpeechText(part))
     .filter(Boolean);
 
@@ -804,6 +1154,27 @@ function parseCommand(text) {
     if (segmentCursorCommand) {
       actions.push(...segmentCursorCommand.actions);
       plans.push(...(segmentCursorCommand.plan || []));
+      continue;
+    }
+
+    const segmentBasicShapePlan = basicShapeSketchPlanFromText(segment);
+    if (segmentBasicShapePlan) {
+      actions.push(...segmentBasicShapePlan.actions);
+      plans.push(...(segmentBasicShapePlan.plan || []));
+      continue;
+    }
+
+    const segmentStarPlan = starPlanFromText(segment);
+    if (segmentStarPlan) {
+      actions.push(...segmentStarPlan.actions);
+      plans.push(...(segmentStarPlan.plan || []));
+      continue;
+    }
+
+    const segmentObjectRecipe = objectSketchRecipeFromText(segment);
+    if (segmentObjectRecipe) {
+      actions.push(...segmentObjectRecipe.actions);
+      plans.push(...(segmentObjectRecipe.plan || []));
       continue;
     }
 
@@ -857,44 +1228,20 @@ function parseCommand(text) {
     }
 
     if (/写|文字|文本/.test(segment)) {
-      const content = segment.match(/(?:写上|写|文字|文本)(.+)/)?.[1] || "Voice";
-      actions.push({
-        type: "create_shape",
-        shape: "text",
-        text: content.replace(/放在|放到|在.+/, ""),
-        fill: palette[colorFromText(segment, "black")],
-        position: positionFromText(segment) || "center",
-        size: "medium"
-      });
       continue;
     }
 
-    const shape = shapeFromText(segment);
-    const count = countFromText(segment);
-    const position = positionFromText(segment);
-    const placement = relativePlacement(segment);
-    const fill = palette[colorFromText(segment, "blue")];
-
-    if (shape) {
-      for (let i = 0; i < count; i += 1) {
-        actions.push({
-          type: "create_shape",
-          shape,
-          fill,
-          stroke: "#1f2937",
-          strokeWidth: 3,
-          position: position || defaultShapePosition(i, count),
-          relativeTo: !position && placement ? { target: "last_created", placement } : null,
-          size: sizeFromText(segment, 120),
-          style: "cute_flat"
-        });
-      }
+    const basicShapePlan = basicShapeSketchPlanFromText(segment);
+    if (basicShapePlan) {
+      actions.push(...basicShapePlan.actions);
+      plans.push(...(basicShapePlan.plan || []));
     }
   }
 
   if (!actions.length) {
     return {
-      clarification: "我现在先支持一笔一笔画：直线、曲线、圆、画笔移动、颜色和线宽。"
+      clarification: "我现在先支持直线、曲线、圆、画笔移动，以及小狗、小猫、小房子、小花、小树等运笔配方。",
+      skipLlm: true
     };
   }
 
@@ -1022,6 +1369,7 @@ function sanitizeAction(action) {
     const direction = ["left", "right", "up", "down", "forward"].includes(action.direction)
       ? action.direction
       : "right";
+    const angle = Number(action.angle);
     return {
       type: "draw_path",
       path,
@@ -1032,6 +1380,7 @@ function sanitizeAction(action) {
       gridUnits: Number.isFinite(gridUnits) ? clamp(gridUnits, 1, 20) : null,
       radiusGridUnits: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits, 1, 10) : null,
       direction,
+      angle: Number.isFinite(angle) ? clamp(angle, -360, 360) : null,
       anchor,
       target: supportedTargets.includes(action.target) ? action.target : "last_created",
       position: sanitizePosition(action.position)
@@ -1168,24 +1517,24 @@ async function parseCommandSmart(text) {
   }
 
   state.llmInFlight = true;
-  setSpeechHint("复杂口令正在交给 DeepSeek 拆解，稍等一下。");
+  setSpeechHint(`复杂口令正在交给 ${state.llmProvider || "OpenAI"} 拆解，稍等一下。`);
 
   try {
     const result = await fetchLlmCommand(text);
     state.llmAvailable = true;
-    state.llmProvider = result.provider || "DeepSeek";
+    state.llmProvider = result.provider || "OpenAI";
     const dsl = sanitizeDsl(result.dsl || result);
     if (isExecutableDsl(dsl)) {
       addLog(`${state.llmProvider} 已拆解复杂口令`);
-      return { ...dsl, source: "deepseek_llm" };
+      return { ...dsl, source: `${state.llmProvider.toLowerCase()}_llm` };
     }
     return dsl;
   } catch (error) {
     if (error.status === 404 || error.status === 503) {
       state.llmAvailable = false;
     }
-    addLog(`DeepSeek 解析不可用，已回退本地规则：${error.message}`, "error");
-    setSpeechHint("DeepSeek 解析暂不可用，已使用本地规则继续执行。", "warning");
+    addLog(`${state.llmProvider || "OpenAI"} 解析不可用，已回退本地规则：${error.message}`, "error");
+    setSpeechHint(`${state.llmProvider || "OpenAI"} 解析暂不可用，已使用本地规则继续执行。`, "warning");
     return { ...localDsl, source: "local_rules_fallback" };
   } finally {
     state.llmInFlight = false;
@@ -1239,9 +1588,12 @@ async function executeDsl(dsl) {
   state.latestPlan = Array.isArray(dsl.plan) ? dsl.plan : [];
   dslOutput.textContent = JSON.stringify(dsl, null, 2);
 
-  const actions = Array.isArray(dsl.actions) ? dsl.actions : [];
+  const hadTemplateAction = Array.isArray(dsl.actions) && dsl.actions.some((action) => action?.type === "create_shape");
+  const actions = Array.isArray(dsl.actions)
+    ? dsl.actions.filter((action) => action?.type !== "create_shape")
+    : [];
   if (!actions.length) {
-    addLog("没有可执行的绘图动作", "error");
+    addLog(hadTemplateAction ? "已拒绝形状模板动作，请改用路径笔画规划。" : "没有可执行的绘图动作", "error");
     return;
   }
 
@@ -1284,7 +1636,7 @@ function shouldAnimateDrawing(dsl) {
   const actions = Array.isArray(dsl.actions) ? dsl.actions : [];
   if (actions.length < 2) return false;
   if (!Array.isArray(dsl.plan) || !dsl.plan.length) return false;
-  return actions.some((action) => action.type === "draw_path" || action.type === "create_shape");
+  return actions.some((action) => action.type === "draw_path");
 }
 
 async function moveDrawingCursorToAction(action) {
@@ -1316,18 +1668,7 @@ function actionPreviewPoint(action) {
   if (action.type === "draw_path") {
     return normalizedPathPreviewPoint(action);
   }
-  if (action.type !== "create_shape") return null;
-  const base = typeof action.size === "number" ? action.size : 120;
-  const width = typeof action.width === "number" ? action.width : base;
-  const height = typeof action.height === "number" ? action.height : base;
-  const point = action.relativeTo
-    ? resolveRelative(action.relativeTo, base)
-    : toPoint(action.position || "center", { width, height });
-  const { width: canvasWidth, height: canvasHeight } = canvasSize();
-  return {
-    x: clamp(point.x / Math.max(1, canvasWidth), 0.03, 0.97),
-    y: clamp(point.y / Math.max(1, canvasHeight), 0.03, 0.97)
-  };
+  return null;
 }
 
 function executeAction(action) {
@@ -1709,7 +2050,7 @@ function targetAnchorPoint(target, anchor) {
 function pathEndPoint(start, action) {
   const { width, height } = canvasSize();
   const distance = action.distance || 120;
-  const [dx, dy] = directionVector(action.direction);
+  const [dx, dy] = hasActionAngle(action) ? vectorFromAngle(action.angle) : directionVector(action.direction);
   return {
     x: clamp(start.x + dx * distance, 20, width - 20),
     y: clamp(start.y + dy * distance, 20, height - 20)
@@ -1732,7 +2073,7 @@ function curvePoints(start, end, action) {
   const direction = action.direction || "right";
   const distance = Math.max(24, action.distance || 120);
   const bend = Math.min(90, Math.max(28, distance * 0.42));
-  const [dx, dy] = directionVector(direction);
+  const [dx, dy] = hasActionAngle(action) ? vectorFromAngle(action.angle) : directionVector(direction);
   const perpendicular = { x: -dy * bend, y: dx * bend };
   const control = {
     x: (start.x + end.x) / 2 + perpendicular.x,
@@ -2230,7 +2571,7 @@ async function checkLlmStatus() {
     }
     const status = await response.json();
     state.llmAvailable = Boolean(status.configured);
-    state.llmProvider = status.provider || "DeepSeek";
+    state.llmProvider = status.provider || "OpenAI";
     if (status.configured) {
       addLog(`${state.llmProvider} 指令增强已连接：${status.model}`);
     }

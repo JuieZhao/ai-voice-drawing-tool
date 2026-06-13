@@ -23,7 +23,7 @@
 语音输入 -> 语音识别 -> 指令解析 -> 绘图 DSL -> Canvas 渲染 -> 语音继续编辑
 ```
 
-AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可校验的绘图动作。当前 MVP 不再走“语音贴模板”的路线，而是先把直线、曲线、圆、画笔移动和上下文引用做好；复杂口令可选接入 DeepSeek，把纠错后的中文口令转换为绘图 DSL。
+AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可校验的绘图动作。当前 MVP 不再走“语音贴模板”的路线，而是先把直线、曲线、圆、画笔移动、上下文引用和一批稳定运笔配方做好；复杂口令可选接入 OpenAI，把纠错后的中文口令转换为绘图 DSL。
 
 当前绘图主线是“一笔一笔画”。用户可以说“向右画一条直线”“接着向下画一条曲线”“在末端画一个圆”，系统会记录上一笔的末端、中心和边界，让下一句命令能接着上一句继续画。
 
@@ -31,7 +31,7 @@ AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可
 
 ## 当前能力
 
-- 语音创建基础图形：圆形、矩形、三角形、线条、箭头、文字
+- 语音绘制基础笔画：圆形路径、矩形路径、三角形路径、直线、曲线
 - 语音设置颜色、大小和位置
 - 支持 A1-C3 九宫格坐标定位和网格显示/隐藏；细网格也是距离单位，1 格 = 34 像素
 - 支持“刚才那个”“它”“上一笔”“末端”等上下文引用
@@ -39,11 +39,13 @@ AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可
 - 支持旋转指针朝向：顺时针/逆时针旋转任意角度后，可以直接向前移动或绘图
 - 支持一笔一笔画：直线、曲线、圆形路径
 - 支持按格绘制距离：“向右画一个五格长的直线”
+- 支持动作配方规划：“画一个五角星，边长五格”“画一个三角形”会展开为路径笔画和转向动作
+- 支持简笔画运笔配方：“画一个小狗 / 小猫 / 小房子 / 小花 / 小树”会展开为多个画笔动作
 - 支持相对位置：“从刚才的圆右边继续画直线”
 - 支持撤销、重做、清空画布
 - 支持绘制步骤面板：展示路径或画笔动作的拆解过程
 - 支持海龟式画笔控制：落笔、抬笔、前进、后退、顺时针/逆时针旋转、回中心、改画笔颜色、改线宽，并可辅助绘制正方形、三角形
-- 支持可选 DeepSeek 复杂口令解析，失败时自动回退本地规则
+- 支持可选 OpenAI 复杂口令解析，失败时自动回退本地规则
 - 展示最近一次绘图 DSL 和执行日志
 - 统一儿童绘本式扁平矢量风格
 
@@ -55,6 +57,11 @@ AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可
 向右画一个五格长的直线
 顺时针旋转45度
 向前画五格
+画一个五角星，边长五格
+画一个小狗
+画一个小猫
+画一个小房子
+画一个小花
 接着向下画一条曲线
 在末端画一个圆
 画一个半径六十的圆
@@ -73,7 +80,7 @@ AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可
 
 ## 本地运行
 
-默认开发服务使用 Node.js，既托管静态页面，也提供可选的 DeepSeek 解析接口。
+默认开发服务使用 Node.js，既托管静态页面，也提供可选的 OpenAI 解析接口。
 
 ```bash
 npm run dev
@@ -93,28 +100,29 @@ npm run static
 
 语音识别依赖浏览器 Web Speech API，建议使用 Chrome。
 
-## DeepSeek Key 配置
+## OpenAI Key 配置
 
 项目不会在浏览器前端暴露 API Key。Key 只由本地 Node 服务读取。
 
 临时配置 PowerShell 环境变量：
 
 ```powershell
-$env:DEEPSEEK_API_KEY="你的 DeepSeek API Key"
-$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+$env:OPENAI_API_KEY="你的 OpenAI API Key"
+$env:OPENAI_MODEL="gpt-5.4-mini"
+$env:OPENAI_REASONING_EFFORT="low"
 npm run dev
 ```
 
 也可以在本地新建 `.env` 记录配置，但不要提交 `.env`：
 
 ```text
-DEEPSEEK_API_KEY=你的 DeepSeek API Key
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
-DEEPSEEK_THINKING=disabled
+OPENAI_API_KEY=你的 OpenAI API Key
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-5.4-mini
+OPENAI_REASONING_EFFORT=low
 ```
 
-DeepSeek 官方 API 使用 OpenAI-compatible 格式。当前默认模型使用 `deepseek-v4-flash`；如需更强解析可改为 `deepseek-v4-pro`。旧模型名 `deepseek-chat` 和 `deepseek-reasoner` 官方标注会在 2026-07-24 15:59 UTC 废弃，因此不作为默认值。
+当前默认模型使用 `gpt-5.4-mini`，优先保证响应速度和成本可控；如需更强的复杂口令拆解，可改为 `gpt-5.5`。后端使用 OpenAI Responses API，并通过 JSON Schema 约束模型输出为可执行绘图 DSL。
 
 ## 依赖与第三方说明
 
@@ -122,14 +130,14 @@ DeepSeek 官方 API 使用 OpenAI-compatible 格式。当前默认模型使用 `
 
 运行时使用的浏览器能力：
 
-- Canvas API：绘制基础图形和路径笔画
+- Canvas API：绘制路径笔画和逐步动画
 - Web Speech API：浏览器语音识别
 - MediaDevices `getUserMedia`：麦克风权限检测
-- 可选 DeepSeek API：复杂口令纠错与绘图 DSL 生成
+- 可选 OpenAI API：复杂口令纠错与绘图 DSL 生成
 
 开发/验证工具：
 
-- Node.js：本地开发服务、DeepSeek 代理接口、语法检查
+- Node.js：本地开发服务、OpenAI 代理接口、语法检查
 - Python `http.server`：可选静态服务
 
 原创功能部分：
@@ -140,7 +148,7 @@ DeepSeek 官方 API 使用 OpenAI-compatible 格式。当前默认模型使用 `
 - 对象状态、撤销、重做
 - 路径笔画、上下文锚点和画笔状态
 - 语音诊断与错误提示
-- DeepSeek 解析提示词、DSL 过滤和本地规则回退逻辑
+- OpenAI 解析提示词、结构化 DSL 过滤和本地规则回退逻辑
 
 本项目未复用个人过去项目代码片段；如后续引入第三方库、外部素材或历史代码，将在 README 和对应 PR 描述中注明来源与用途。
 
@@ -182,10 +190,12 @@ DeepSeek 官方 API 使用 OpenAI-compatible 格式。当前默认模型使用 `
 因此当前版本选择：
 
 - 简单命令走本地解析，保证低延迟。
-- 复杂命令可选走 DeepSeek 解析，保证自然语言理解上限。
+- 复杂命令可选走 OpenAI 解析，保证自然语言理解上限。
 - LLM 输出必须经过本地 DSL 过滤，不能直接执行模型返回内容。
 - 先把基础笔画、路径和上下文做好，而不是预制大量可贴放对象。
-- LLM 输出必须是可执行 DSL，优先生成 `draw_path`、海龟动作和基础图形。
+- LLM 输出必须是可执行 DSL，优先生成 `draw_path`、指针移动和海龟动作。
+- 对“五角星、矩形、三角形、小狗、小猫、小房子”等演示目标优先使用本地运笔配方，保证三天比赛版本稳定可演示。
+- OpenAI 保留为复杂口令增强；“任意物体自动规划笔画”放入后续展望。
 - 当前主动收窄复杂物体能力，避免作品变成语音贴纸工具。
 
 ## 持续交付
