@@ -297,12 +297,20 @@ function startResultTimer() {
   }, 9000);
 }
 
-function resizeCanvas() {
+function syncCanvasResolution() {
   const rect = canvas.getBoundingClientRect();
   const ratio = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.floor(rect.width * ratio));
-  canvas.height = Math.max(1, Math.floor(rect.height * ratio));
+  const nextWidth = Math.max(1, Math.floor(rect.width * ratio));
+  const nextHeight = Math.max(1, Math.floor(rect.height * ratio));
+  if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+    canvas.width = nextWidth;
+    canvas.height = nextHeight;
+  }
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+}
+
+function resizeCanvas() {
+  syncCanvasResolution();
   draw();
 }
 
@@ -442,23 +450,53 @@ function numberFromText(text, fallback = null) {
   const digit = normalized.match(/\d+/);
   if (digit) return Number(digit[0]);
 
+  const token = normalized.match(/[零一幺二两三四五六七八九十百]+/)?.[0] || "";
+  const parsed = parseChineseNumberToken(token);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseChineseNumberToken(token) {
   const digits = { 零: 0, 一: 1, 幺: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
-  if (normalized.includes("一百")) return 100;
-  if (normalized.includes("两百") || normalized.includes("二百")) return 200;
-  if (normalized.includes("十")) {
-    const match = normalized.match(/([一二两三四五六七八九])?十([一二两三四五六七八九])?/);
-    if (match) {
-      const tens = match[1] ? digits[match[1]] : 1;
-      const ones = match[2] ? digits[match[2]] : 0;
-      return tens * 10 + ones;
-    }
-    return 10;
+  const clean = String(token || "").trim();
+  if (!clean) return null;
+  if (/^\d+$/.test(clean)) return Number(clean);
+
+  const digitChars = [...clean].map((char) => digits[char]);
+  if (!/[十百]/.test(clean) && digitChars.every((value) => Number.isFinite(value))) {
+    return Number(digitChars.join(""));
   }
 
-  for (const [word, value] of Object.entries(digits)) {
-    if (normalized.includes(word)) return value;
+  if (clean.includes("百")) {
+    const [rawHundreds, rawRest = ""] = clean.split("百");
+    const hundreds = rawHundreds ? parseChineseNumberToken(rawHundreds) : 1;
+    if (!Number.isFinite(hundreds)) return null;
+    const rest = rawRest.replace(/^零/, "");
+    if (!rest) return hundreds * 100;
+    if (!rest.includes("十") && rest.length === 1 && !rawRest.startsWith("零")) {
+      return hundreds * 100 + (digits[rest] || 0) * 10;
+    }
+    const restValue = parseChineseNumberToken(rest);
+    return Number.isFinite(restValue) ? hundreds * 100 + restValue : hundreds * 100;
   }
-  return fallback;
+
+  if (clean.includes("十")) {
+    const [rawTens, rawOnes = ""] = clean.split("十");
+    const tens = rawTens ? parseChineseNumberToken(rawTens) : 1;
+    const ones = rawOnes ? parseChineseNumberToken(rawOnes) : 0;
+    return (Number.isFinite(tens) ? tens : 1) * 10 + (Number.isFinite(ones) ? ones : 0);
+  }
+
+  return digits[clean] ?? null;
+}
+
+function angleFromText(text, fallback = 90) {
+  const normalized = normalizeSpeechText(text);
+  const degreeToken = normalized.match(/(\d+|[零一幺二两三四五六七八九十百]+)(?:度|°)/)?.[1];
+  if (degreeToken) {
+    const parsed = /^\d+$/.test(degreeToken) ? Number(degreeToken) : parseChineseNumberToken(degreeToken);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return numberFromText(normalized, fallback);
 }
 
 function gridCountFromText(text) {
@@ -500,8 +538,7 @@ function plannedObjectFromText(text) {
   const normalized = normalizeSpeechText(text);
   if (/汽车|小车|车子|轿车|太阳|云|女孩|小女孩/.test(normalized)) {
     return {
-      clarification: "当前演示版先支持五角星、三角形、矩形、小猫、小狗、小房子、小花和小树等运笔配方。",
-      skipLlm: true
+      clarification: "这个目标需要先拆成可执行的画笔步骤。"
     };
   }
   return null;
@@ -590,30 +627,11 @@ function objectSketchRecipeFromText(text) {
   return null;
 }
 
-function recipeCenterFromText(text) {
-  const position = positionFromText(text);
-  if (typeof position === "object" && position !== null) return position;
-
-  const cell = String(position || "").toUpperCase().match(/^([ABC])([123])$/);
-  if (cell) {
-    return {
-      x: (gridColumns.indexOf(cell[1]) + 0.5) / gridColumns.length,
-      y: (gridRows.indexOf(cell[2]) + 0.5) / gridRows.length
-    };
-  }
-
-  const map = {
-    center: { x: 0.5, y: 0.54 },
-    left: { x: 0.31, y: 0.54 },
-    right: { x: 0.69, y: 0.54 },
-    top: { x: 0.5, y: 0.32 },
-    bottom: { x: 0.5, y: 0.72 },
-    top_left: { x: 0.31, y: 0.32 },
-    top_right: { x: 0.69, y: 0.32 },
-    bottom_left: { x: 0.31, y: 0.72 },
-    bottom_right: { x: 0.69, y: 0.72 }
+function recipeOriginFromCursor() {
+  return {
+    x: state.turtle.x,
+    y: state.turtle.y
   };
-  return map[position] || map.center;
 }
 
 function recipeScaleFromText(text) {
@@ -633,13 +651,13 @@ function roundPoint(value) {
 function sketchTools(text, fallbackColor = "black") {
   const normalized = normalizeSpeechText(text);
   const { width, height } = canvasSize();
-  const center = recipeCenterFromText(normalized);
+  const origin = recipeOriginFromCursor();
   const scale = recipeScaleFromText(normalized);
   const primary = palette[colorFromText(normalized, fallbackColor)] || state.turtle.stroke;
   const strokeWidth = pathStrokeWidthFromText(normalized);
   const point = (dx = 0, dy = 0) => ({
-    x: roundPoint(clamp(center.x + (dx * scale) / Math.max(1, width), 0.06, 0.94)),
-    y: roundPoint(clamp(center.y + (dy * scale) / Math.max(1, height), 0.08, 0.92))
+    x: roundPoint(clamp(origin.x + (dx * scale) / Math.max(1, width), 0.06, 0.94)),
+    y: roundPoint(clamp(origin.y + (dy * scale) / Math.max(1, height), 0.08, 0.92))
   });
   const move = (dx, dy) => ({ type: "move_cursor", position: point(dx, dy) });
   const line = (angle, distance, stroke = primary, widthOverride = strokeWidth) => ({
@@ -651,11 +669,12 @@ function sketchTools(text, fallbackColor = "black") {
     stroke,
     strokeWidth: widthOverride
   });
-  const curve = (angle, distance, stroke = primary, widthOverride = strokeWidth) => ({
+  const curve = (angle, distance, stroke = primary, widthOverride = strokeWidth, bend = 1) => ({
     type: "draw_path",
     path: "curve",
     angle,
     distance: Math.round(distance * scale),
+    bend,
     anchor: "cursor",
     stroke,
     strokeWidth: widthOverride
@@ -666,9 +685,20 @@ function sketchTools(text, fallbackColor = "black") {
     position: point(dx, dy),
     radius: Math.round(radius * scale),
     stroke,
+    fill: "transparent",
     strokeWidth: widthOverride
   });
-  return { primary, strokeWidth, move, line, curve, circle };
+  const filledCircle = (dx, dy, radius, fill, stroke = detailStroke(), widthOverride = strokeWidth) => ({
+    type: "draw_path",
+    path: "circle",
+    position: point(dx, dy),
+    radius: Math.round(radius * scale),
+    stroke,
+    fill,
+    strokeWidth: widthOverride
+  });
+  const detailStroke = () => palette.black;
+  return { primary, strokeWidth, move, line, curve, circle, filledCircle };
 }
 
 function catSketchRecipeFromText(text) {
@@ -717,30 +747,30 @@ function catSketchRecipeFromText(text) {
 function dogSketchRecipeFromText(text) {
   const tools = sketchTools(text, "brown");
   const detail = palette.black;
+  const head = "#f5deb3";
+  const ear = "#8b4513";
   return {
     label: "小狗运笔配方",
     plan: [
-      "先画小狗的身体和圆头",
-      "画下垂耳朵、鼻子和眼睛",
-      "用短线补腿，再用曲线画尾巴"
+      "先画小狗的大圆脸",
+      "用两组棕色圆画左右耳朵",
+      "补上眼白、瞳孔、鼻子和两段嘴巴弧线"
     ],
     actions: [
-      tools.circle(25, 18, 54),
-      tools.circle(-48, -32, 36),
-      tools.circle(-76, -29, 23),
-      tools.circle(-20, -22, 20),
-      tools.circle(-58, -43, 7, detail, 3),
-      tools.circle(-10, -23, 7, detail, 3),
-      tools.move(-72, -16),
-      tools.curve(170, 34, detail, 3),
-      tools.move(2, 65),
-      tools.line(90, 36),
-      tools.move(43, 65),
-      tools.line(90, 36),
-      tools.move(76, 0),
-      tools.curve(-38, 58),
-      tools.move(-19, -9),
-      tools.curve(38, 32, detail, 3)
+      tools.filledCircle(0, 0, 80, head, detail, 3),
+      tools.filledCircle(-65, -50, 25, ear, detail, 3),
+      tools.filledCircle(-85, -20, 25, ear, detail, 3),
+      tools.filledCircle(65, -50, 25, ear, detail, 3),
+      tools.filledCircle(85, -20, 25, ear, detail, 3),
+      tools.filledCircle(-30, -20, 15, palette.white, detail, 3),
+      tools.filledCircle(-30, -20, 6, detail, detail, 2),
+      tools.filledCircle(30, -20, 15, palette.white, detail, 3),
+      tools.filledCircle(30, -20, 6, detail, detail, 2),
+      tools.filledCircle(0, 15, 12, detail, detail, 2),
+      tools.move(0, 35),
+      tools.curve(118, 40, detail, 3, 1),
+      tools.move(0, 35),
+      tools.curve(62, 40, detail, 3, -1)
     ]
   };
 }
@@ -870,7 +900,7 @@ function turnCommandFromText(text) {
   const mentionsCursor = /指针|光标|笔尖|画笔|海龟/.test(normalized);
   if (!clockwise && !counterClockwise && !mentionsCursor) return null;
 
-  const angle = numberFromText(normalized, 90);
+  const angle = angleFromText(normalized, 90);
   const signedAngle = counterClockwise ? -angle : angle;
   return {
     plan: [turnActionLabel(signedAngle)],
@@ -1241,8 +1271,7 @@ function parseCommand(text) {
 
   if (!actions.length) {
     return {
-      clarification: "我现在先支持直线、曲线、圆、画笔移动，以及小狗、小猫、小房子、小花、小树等运笔配方。",
-      skipLlm: true
+      clarification: "我现在先支持直线、曲线、圆、画笔移动，也可以让 OpenAI 尝试把物体拆成运笔步骤。"
     };
   }
 
@@ -1253,9 +1282,25 @@ function isExecutableDsl(dsl) {
   return Array.isArray(dsl?.actions) && dsl.actions.length > 0;
 }
 
+function wantsLlmSketchPlanning(text) {
+  const normalized = normalizeSpeechText(text);
+  if (!/画|绘制|生成|来一个/.test(normalized)) return false;
+  if (/五角星|星星|五芒星|三角形|三角|矩形|长方形|正方形|方块|方形|直线|曲线|圆|圆形|圆圈/.test(normalized)) {
+    return false;
+  }
+  if (/画笔|笔尖|指针|光标|落笔|抬笔|颜色|粗细|线宽|旋转|转向|前进|移动/.test(normalized)) return false;
+  if (/狗|小狗|狗狗|小犬|猫|小猫|猫咪|房子|房屋|小屋|屋子|小房子|花|小花|花朵|树|小树|树木|汽车|小车|车子|轿车|太阳|云|女孩|小女孩/.test(normalized)) {
+    return true;
+  }
+  return /(?:画|绘制|生成)(?:一个|个|一只|只|一条|条|一棵|棵|一朵|朵|一辆|辆|一座|座|一间|间)[\u4e00-\u9fa5]{1,8}/.test(normalized)
+    || /来一个[\u4e00-\u9fa5]{1,8}/.test(normalized);
+}
+
 function shouldUseLlm(text, localDsl) {
   if (state.llmInFlight || state.llmAvailable === false) return false;
   if (localDsl?.skipLlm) return false;
+  if (localDsl?.label && /运笔配方|动作配方/.test(localDsl.label)) return false;
+  if (wantsLlmSketchPlanning(text)) return true;
   if (Array.isArray(localDsl?.plan) && localDsl.plan.length) return false;
   if (isExecutableDsl(localDsl) && localDsl.actions.every((action) => ["move_cursor", "draw_path"].includes(action.type))) return false;
   const normalized = normalizeSpeechText(text);
@@ -1364,7 +1409,7 @@ function sanitizeAction(action) {
     const distance = Number(action.distance);
     const radius = Number(action.radius);
     const strokeWidth = Number(action.strokeWidth);
-    const anchor = ["cursor", "last_end", "center", "left", "right", "top", "bottom"].includes(action.anchor)
+    const anchor = ["cursor", "last_end"].includes(action.anchor)
       ? action.anchor
       : "cursor";
     const direction = ["left", "right", "up", "down", "forward"].includes(action.direction)
@@ -1375,6 +1420,7 @@ function sanitizeAction(action) {
       type: "draw_path",
       path,
       stroke: normalizeFill(action.stroke || action.fill, state.turtle.stroke),
+      fill: normalizeFill(action.fill, "transparent"),
       strokeWidth: Number.isFinite(strokeWidth) ? clamp(strokeWidth, 1, 14) : state.turtle.strokeWidth,
       distance: Number.isFinite(gridUnits) ? clamp(gridUnits * gridUnit, 12, 320) : Number.isFinite(distance) ? clamp(distance, 12, 320) : 120,
       radius: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits * gridUnit, 8, 150) : Number.isFinite(radius) ? clamp(radius, 8, 150) : 54,
@@ -1384,7 +1430,7 @@ function sanitizeAction(action) {
       angle: Number.isFinite(angle) ? clamp(angle, -360, 360) : null,
       anchor,
       target: supportedTargets.includes(action.target) ? action.target : "last_created",
-      position: sanitizePosition(action.position)
+      position: null
     };
   }
 
@@ -1473,9 +1519,93 @@ function sanitizeDsl(dsl) {
   };
 }
 
+function roundMetric(value, digits = 3) {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function llmCanvasContext() {
+  const { width, height } = canvasSize();
+  const safeMargin = Math.max(48, gridUnit * 2);
+  const cursorPixel = {
+    x: state.turtle.x * width,
+    y: state.turtle.y * height
+  };
+  const roomGridUnits = {
+    left: roundMetric(cursorPixel.x / gridUnit, 1),
+    right: roundMetric((width - cursorPixel.x) / gridUnit, 1),
+    up: roundMetric(cursorPixel.y / gridUnit, 1),
+    down: roundMetric((height - cursorPixel.y) / gridUnit, 1)
+  };
+  const nearEdges = Object.entries(roomGridUnits)
+    .filter(([, grids]) => grids < 4)
+    .map(([edge]) => edge);
+
+  return {
+    width: Math.round(width),
+    height: Math.round(height),
+    gridUnit,
+    gridColumns: Math.max(1, Math.floor(width / gridUnit)),
+    gridRows: Math.max(1, Math.floor(height / gridUnit)),
+    coordinateSystem: "pixel origin is top-left; x increases right; y increases down; normalized x/y are 0..1.",
+    safeFrame: {
+      pixel: {
+        left: Math.round(safeMargin),
+        top: Math.round(safeMargin),
+        right: Math.round(width - safeMargin),
+        bottom: Math.round(height - safeMargin)
+      },
+      normalized: {
+        left: roundMetric(safeMargin / Math.max(1, width)),
+        top: roundMetric(safeMargin / Math.max(1, height)),
+        right: roundMetric((width - safeMargin) / Math.max(1, width)),
+        bottom: roundMetric((height - safeMargin) / Math.max(1, height))
+      },
+      note: "Keep object strokes inside this safe frame whenever possible."
+    },
+    cursorPixel: {
+      x: Math.round(cursorPixel.x),
+      y: Math.round(cursorPixel.y)
+    },
+    cursorGrid: {
+      x: roundMetric(cursorPixel.x / gridUnit, 1),
+      y: roundMetric(cursorPixel.y / gridUnit, 1)
+    },
+    roomGridUnits,
+    edgeHint: nearEdges.length
+      ? `Cursor is near ${nearEdges.join(", ")} edge; draw inward and avoid moving farther toward that edge.`
+      : "Cursor has enough room around it for a compact sketch."
+  };
+}
+
 function llmContext() {
+  const canvasContext = llmCanvasContext();
   return {
     objectCount: state.objects.length,
+    canvas: canvasContext,
+    cursor: {
+      x: Number(state.turtle.x.toFixed(3)),
+      y: Number(state.turtle.y.toFixed(3)),
+      pixelX: canvasContext.cursorPixel.x,
+      pixelY: canvasContext.cursorPixel.y,
+      gridX: canvasContext.cursorGrid.x,
+      gridY: canvasContext.cursorGrid.y,
+      angle: Number(state.turtle.angle.toFixed(1)),
+      penDown: state.turtle.penDown,
+      stroke: state.turtle.stroke,
+      strokeWidth: state.turtle.strokeWidth,
+      coordinateMode: "normalized_canvas",
+      roomGridUnits: canvasContext.roomGridUnits,
+      note: "All new drawing should start from this cursor unless the user explicitly moves the cursor first. If the cursor is near an edge, plan the object inward so it stays visible."
+    },
+    gridUnit,
+    drawingRules: [
+      "Use gridUnits for movement and stroke length; 1 grid = 34 pixels.",
+      "move_cursor with direction/gridUnits moves relative to the current cursor.",
+      "draw_path line/curve with anchor cursor starts at the current cursor.",
+      "draw_path circle with anchor cursor uses the current cursor as the circle center; after the circle is drawn, the runtime cursor ends on the right side of that circle.",
+      "For compact objects such as cars or animals, prefer widths around 4-8 grid units and heights around 2-5 grid units."
+    ],
     lastObject: state.objects.find((object) => object.id === state.lastObjectId) || null,
     objects: state.objects.map((object) => ({
       id: object.id,
@@ -1918,7 +2048,7 @@ function buildPathStroke(action) {
     }
     return {
       points,
-      options: { label: "手绘圆", stroke, strokeWidth },
+      options: { label: "手绘圆", stroke, fill: action.fill || "transparent", strokeWidth },
       closed: true,
       delay: 10,
       log: "画一个圆"
@@ -1936,6 +2066,7 @@ function buildPathStroke(action) {
     options: {
       label: action.path === "curve" ? "手绘曲线" : "手绘直线",
       stroke,
+      fill: "transparent",
       strokeWidth
     },
     closed: false,
@@ -1962,6 +2093,7 @@ function addStrokeObject(points, options = {}) {
     points: boundedPoints,
     closed: Boolean(options.closed),
     stroke: options.stroke || state.turtle.stroke,
+    fill: options.fill || "transparent",
     strokeWidth: options.strokeWidth || state.turtle.strokeWidth
   };
   state.objects.push(object);
@@ -2073,7 +2205,8 @@ function linePoints(start, end) {
 function curvePoints(start, end, action) {
   const direction = action.direction || "right";
   const distance = Math.max(24, action.distance || 120);
-  const bend = Math.min(90, Math.max(28, distance * 0.42));
+  const bendDirection = Number.isFinite(Number(action.bend)) ? Math.sign(Number(action.bend)) || 1 : 1;
+  const bend = Math.min(90, Math.max(28, distance * 0.42)) * bendDirection;
   const [dx, dy] = hasActionAngle(action) ? vectorFromAngle(action.angle) : directionVector(direction);
   const perpendicular = { x: -dy * bend, y: dx * bend };
   const control = {
@@ -2261,6 +2394,7 @@ function shapeLabel(shape) {
 }
 
 function draw() {
+  syncCanvasResolution();
   const { width, height } = canvasSize();
   ctx.clearRect(0, 0, width, height);
   drawPaper(width, height);
@@ -2373,6 +2507,10 @@ function drawStroke(object) {
   });
   if (object.closed) {
     ctx.closePath();
+  }
+  if (object.closed && object.fill && object.fill !== "transparent") {
+    ctx.fillStyle = object.fill;
+    ctx.fill();
   }
   ctx.stroke();
 }

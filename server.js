@@ -50,12 +50,18 @@ function cleanReasoningEffort(value) {
   return ["none", "low", "medium", "high", "xhigh"].includes(effort) ? effort : "low";
 }
 
+function cleanMaxOutputTokens(value) {
+  const tokens = Number(value);
+  return Number.isFinite(tokens) ? Math.min(Math.max(Math.round(tokens), 1200), 12000) : 6000;
+}
+
 const providerConfig = {
   provider: process.env.LLM_PROVIDER || "OpenAI",
   apiKey: cleanApiKey(process.env.OPENAI_API_KEY || process.env.LLM_API_KEY),
   baseUrl: process.env.OPENAI_BASE_URL || process.env.LLM_BASE_URL || "https://api.openai.com/v1",
   model: process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-5.4-mini",
-  reasoningEffort: cleanReasoningEffort(process.env.OPENAI_REASONING_EFFORT || process.env.LLM_REASONING_EFFORT)
+  reasoningEffort: cleanReasoningEffort(process.env.OPENAI_REASONING_EFFORT || process.env.LLM_REASONING_EFFORT),
+  maxOutputTokens: cleanMaxOutputTokens(process.env.OPENAI_MAX_OUTPUT_TOKENS || process.env.LLM_MAX_OUTPUT_TOKENS)
 };
 
 const commandSystemPrompt = `
@@ -81,10 +87,18 @@ const commandSystemPrompt = `
 17. 用户要求画任意物体、几何图案或简笔画时，你是“运笔规划器”：根据目标外形推理怎么下笔、怎么移动、怎么转向，再输出可执行 actions。
 18. 复杂简笔画可以用圆形路径、短直线、斜线、曲线和指针移动组合，但每一步必须是当前 DSL 支持的 action。
 19. 不要输出 repeat/loop 语法、部件名或纯文字计划；必须把所有步骤展开成实际 actions。
+20. 除非用户明确说“移到中心 / 在 B2 / 在左上角”等绝对位置，所有新绘图都必须从 canvasContext.cursor 开始规划；不要默认跑到画布中间。
+21. draw_path 不要使用 position 字段，始终使用 anchor:"cursor" 或 anchor:"last_end"。如果确实要换绝对位置，先输出 move_cursor，再继续 draw_path。
+22. 用户说“画一个小狗/小猫/房子/花/树”等物体时，先在 plan 中写清楚部件顺序，再把它展开成实际 move_cursor、draw_path、turtle_turn 或 turtle_forward 动作，像写 turtle 代码一样一步步画。
+23. 简笔画动作要克制：plan 不超过 6 条，actions 优先控制在 30 步以内，避免输出过长导致 JSON 被截断。
+24. 规划物体前必须读取 canvasContext.canvas：其中包含 width、height、safeFrame、cursorPixel、roomGridUnits 和 edgeHint。所有笔画尽量留在 safeFrame 内。
+25. 如果 cursor.roomGridUnits 显示某个方向少于 4 格，说明指针靠近边缘；不要继续朝该边缘扩展，要把物体主体画向剩余空间更大的方向。
+26. 对小汽车、小动物等紧凑物体，宽度通常控制在 4-8 格，高度 2-5 格；优先输出 gridUnits，不要输出很大的 distance。
+27. draw_path circle 的 anchor:"cursor" 表示当前指针是圆心；圆画完后运行时指针会落在圆右侧，所以连续画多个圆前要先 move_cursor 到下一个圆心。
 
 支持的 actions：
 - move_cursor: direction 为 left, right, up, down, forward；可用 gridUnits 表示移动几格，也可用 position 移到固定位置
-- draw_path: path 为 line, curve, circle；direction 为 left, right, up, down, forward；forward 会沿当前指针朝向；也可用 angle 指定绝对角度；anchor 为 cursor, last_end, center, left, right, top, bottom；可用 gridUnits 表示直线/曲线长度，用 radiusGridUnits 表示圆半径
+- draw_path: path 为 line, curve, circle；direction 为 left, right, up, down, forward；forward 会沿当前指针朝向；也可用 angle 指定绝对角度；anchor 只能为 cursor 或 last_end；可用 gridUnits 表示直线/曲线长度，用 radiusGridUnits 表示圆半径
 - update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas, set_grid
 - pen_down, pen_up, turtle_forward, turtle_turn, turtle_home, turtle_color, turtle_width
 - turtle_turn: angle 为正数表示顺时针旋转，负数表示逆时针旋转
@@ -210,7 +224,7 @@ const dslResponseSchema = {
           gridUnits: { type: ["number", "null"] },
           radiusGridUnits: { type: ["number", "null"] },
           angle: { type: ["number", "null"] },
-          anchor: { type: ["string", "null"], enum: ["cursor", "last_end", "center", "left", "right", "top", "bottom", null] },
+          anchor: { type: ["string", "null"], enum: ["cursor", "last_end", null] },
           target: { type: ["string", "null"], enum: ["last_created", "circle", "rect", "triangle", "line", "arrow", "text", "stroke", null] },
           position: {
             type: ["string", "null"],
@@ -308,17 +322,20 @@ function openAiRequestBody(text, context) {
         schema: dslResponseSchema
       }
     },
-    max_output_tokens: 1200,
+    max_output_tokens: providerConfig.maxOutputTokens,
     store: false
   };
 }
 
-function extractOpenAiOutputText(data) {
+function extractOpenAiModelContent(data) {
+  if (data?.output_parsed && typeof data.output_parsed === "object") return data.output_parsed;
   if (typeof data?.output_text === "string") return data.output_text;
 
   const chunks = [];
   for (const item of data?.output || []) {
     for (const part of item?.content || []) {
+      if (part?.parsed && typeof part.parsed === "object") return part.parsed;
+      if (part?.json && typeof part.json === "object") return part.json;
       if (typeof part?.text === "string") {
         chunks.push(part.text);
       }
@@ -367,15 +384,55 @@ function stripCodeFence(text) {
     .trim();
 }
 
+function extractJsonObjectText(text) {
+  const source = String(text || "");
+  const start = source.indexOf("{");
+  if (start === -1) return "";
+
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (char === "{") depth += 1;
+    if (char === "}") depth -= 1;
+
+    if (depth === 0) {
+      return source.slice(start, index + 1);
+    }
+  }
+
+  return source.slice(start);
+}
+
 function parseModelJson(text) {
   if (text && typeof text === "object") return text;
   const cleaned = stripCodeFence(text);
   try {
     return JSON.parse(cleaned);
   } catch (error) {
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) throw error;
-    return JSON.parse(match[0]);
+    const jsonText = extractJsonObjectText(cleaned);
+    if (!jsonText) throw error;
+    return JSON.parse(jsonText);
   }
 }
 
@@ -447,8 +504,18 @@ async function handleLlmCommand(request, response) {
     return;
   }
 
-  const content = extractOpenAiOutputText(data);
-  if (!content.trim()) {
+  if (data.status === "incomplete") {
+    sendJson(response, 502, {
+      error: "LLM_OUTPUT_INCOMPLETE",
+      message: data.incomplete_details?.reason === "max_output_tokens"
+        ? "模型输出被截断，请调高 OPENAI_MAX_OUTPUT_TOKENS 或让指令更短。"
+        : "模型输出未完成，请重试。"
+    });
+    return;
+  }
+
+  const content = extractOpenAiModelContent(data);
+  if (typeof content === "string" && !content.trim()) {
     sendJson(response, 502, {
       error: "LLM_EMPTY_CONTENT",
       message: "模型没有返回可执行 JSON。"
@@ -465,7 +532,8 @@ async function handleLlmCommand(request, response) {
   } catch (error) {
     sendJson(response, 502, {
       error: "LLM_JSON_PARSE_ERROR",
-      message: "模型返回的 JSON 解析失败。"
+      message: "模型返回的 JSON 解析失败。",
+      snippet: typeof content === "string" ? content.slice(0, 240) : ""
     });
   }
 }
@@ -476,7 +544,8 @@ function handleLlmStatus(response) {
     configured: Boolean(providerConfig.apiKey),
     baseUrl: providerConfig.baseUrl,
     model: providerConfig.model,
-    reasoningEffort: providerConfig.reasoningEffort
+    reasoningEffort: providerConfig.reasoningEffort,
+    maxOutputTokens: providerConfig.maxOutputTokens
   });
 }
 

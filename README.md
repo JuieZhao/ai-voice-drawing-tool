@@ -110,6 +110,7 @@ npm run static
 $env:OPENAI_API_KEY="你的 OpenAI API Key"
 $env:OPENAI_MODEL="gpt-5.4-mini"
 $env:OPENAI_REASONING_EFFORT="low"
+$env:OPENAI_MAX_OUTPUT_TOKENS="6000"
 npm run dev
 ```
 
@@ -120,9 +121,10 @@ OPENAI_API_KEY=你的 OpenAI API Key
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-5.4-mini
 OPENAI_REASONING_EFFORT=low
+OPENAI_MAX_OUTPUT_TOKENS=6000
 ```
 
-当前默认模型使用 `gpt-5.4-mini`，优先保证响应速度和成本可控；如需更强的复杂口令拆解，可改为 `gpt-5.5`。后端使用 OpenAI Responses API，并通过 JSON Schema 约束模型输出为可执行绘图 DSL。
+当前默认模型使用 `gpt-5.4-mini`，优先保证响应速度和成本可控；如需更强的复杂口令拆解，可改为 `gpt-5.5`。后端使用 OpenAI Responses API，并通过 JSON Schema 约束模型输出为可执行绘图 DSL。复杂简笔画会产生较长 JSON，默认 `OPENAI_MAX_OUTPUT_TOKENS=6000`，避免“小狗、小猫”等多步骤规划被截断。
 
 ## 依赖与第三方说明
 
@@ -194,8 +196,8 @@ OPENAI_REASONING_EFFORT=low
 - LLM 输出必须经过本地 DSL 过滤，不能直接执行模型返回内容。
 - 先把基础笔画、路径和上下文做好，而不是预制大量可贴放对象。
 - LLM 输出必须是可执行 DSL，优先生成 `draw_path`、指针移动和海龟动作。
-- 对“五角星、矩形、三角形、小狗、小猫、小房子”等演示目标优先使用本地运笔配方，保证三天比赛版本稳定可演示。
-- OpenAI 保留为复杂口令增强；“任意物体自动规划笔画”放入后续展望。
+- 对“五角星、矩形、三角形、小狗、小猫、小房子”等稳定演示目标优先使用本地运笔配方，保证三天比赛版本稳定可演示。
+- 对未预制的小物体优先让 OpenAI 尝试拆成运笔步骤；如果 OpenAI 不可用，再回退到有限本地规则或提示用户简化。
 - 当前主动收窄复杂物体能力，避免作品变成语音贴纸工具。
 
 ## 持续交付
