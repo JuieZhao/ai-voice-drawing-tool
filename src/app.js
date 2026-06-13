@@ -175,7 +175,7 @@ function commandScore(text) {
 
   if (!normalized) return score;
   if (/画|写|放|在|把|改|变|移|撤销|重做|清空|删除/.test(normalized)) score += 2;
-  if (shapeFromText(normalized) || basicShapeSketchPlanFromText(normalized)) score += 8;
+  if (shapeFromText(normalized) || basicShapeSketchPlanFromText(normalized) || objectSketchRecipeFromText(normalized)) score += 8;
   if (pathKindFromText(normalized)) score += 8;
   if (hasColorWord(normalized)) score += 3;
   if (positionFromText(normalized)) score += 3;
@@ -498,9 +498,10 @@ function relativePlacement(text) {
 
 function plannedObjectFromText(text) {
   const normalized = normalizeSpeechText(text);
-  if (/猫|小猫|猫咪|汽车|小车|车子|轿车|太阳|云|树|房子|房屋|小屋|女孩|小女孩|花/.test(normalized)) {
+  if (/汽车|小车|车子|轿车|太阳|云|女孩|小女孩/.test(normalized)) {
     return {
-      clarification: "这个物体需要拆成基础笔画。请让 DeepSeek 生成可执行绘图步骤。"
+      clarification: "当前演示版先支持五角星、三角形、矩形、小猫、小狗、小房子、小花和小树等运笔配方。",
+      skipLlm: true
     };
   }
   return null;
@@ -576,6 +577,256 @@ function starPlanFromText(text) {
     ],
     actions,
     label: "五角星动作配方"
+  };
+}
+
+function objectSketchRecipeFromText(text) {
+  const normalized = normalizeSpeechText(text);
+  if (/狗|小狗|狗狗|小犬/.test(normalized)) return dogSketchRecipeFromText(normalized);
+  if (/猫|小猫|猫咪/.test(normalized)) return catSketchRecipeFromText(normalized);
+  if (/房子|房屋|小屋|屋子|小房子/.test(normalized)) return houseSketchRecipeFromText(normalized);
+  if (/花|小花|花朵/.test(normalized)) return flowerSketchRecipeFromText(normalized);
+  if (/树|小树|树木/.test(normalized)) return treeSketchRecipeFromText(normalized);
+  return null;
+}
+
+function recipeCenterFromText(text) {
+  const position = positionFromText(text);
+  if (typeof position === "object" && position !== null) return position;
+
+  const cell = String(position || "").toUpperCase().match(/^([ABC])([123])$/);
+  if (cell) {
+    return {
+      x: (gridColumns.indexOf(cell[1]) + 0.5) / gridColumns.length,
+      y: (gridRows.indexOf(cell[2]) + 0.5) / gridRows.length
+    };
+  }
+
+  const map = {
+    center: { x: 0.5, y: 0.54 },
+    left: { x: 0.31, y: 0.54 },
+    right: { x: 0.69, y: 0.54 },
+    top: { x: 0.5, y: 0.32 },
+    bottom: { x: 0.5, y: 0.72 },
+    top_left: { x: 0.31, y: 0.32 },
+    top_right: { x: 0.69, y: 0.32 },
+    bottom_left: { x: 0.31, y: 0.72 },
+    bottom_right: { x: 0.69, y: 0.72 }
+  };
+  return map[position] || map.center;
+}
+
+function recipeScaleFromText(text) {
+  const gridUnits = gridCountFromText(text);
+  if (Number.isFinite(gridUnits)) return clamp(gridUnits / 5, 0.72, 1.45);
+  if (/很大/.test(text)) return 1.32;
+  if (/大/.test(text)) return 1.16;
+  if (/很小/.test(text)) return 0.76;
+  if (/小/.test(text)) return 0.9;
+  return 1;
+}
+
+function roundPoint(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+function sketchTools(text, fallbackColor = "black") {
+  const normalized = normalizeSpeechText(text);
+  const { width, height } = canvasSize();
+  const center = recipeCenterFromText(normalized);
+  const scale = recipeScaleFromText(normalized);
+  const primary = palette[colorFromText(normalized, fallbackColor)] || state.turtle.stroke;
+  const strokeWidth = pathStrokeWidthFromText(normalized);
+  const point = (dx = 0, dy = 0) => ({
+    x: roundPoint(clamp(center.x + (dx * scale) / Math.max(1, width), 0.06, 0.94)),
+    y: roundPoint(clamp(center.y + (dy * scale) / Math.max(1, height), 0.08, 0.92))
+  });
+  const move = (dx, dy) => ({ type: "move_cursor", position: point(dx, dy) });
+  const line = (angle, distance, stroke = primary, widthOverride = strokeWidth) => ({
+    type: "draw_path",
+    path: "line",
+    angle,
+    distance: Math.round(distance * scale),
+    anchor: "cursor",
+    stroke,
+    strokeWidth: widthOverride
+  });
+  const curve = (angle, distance, stroke = primary, widthOverride = strokeWidth) => ({
+    type: "draw_path",
+    path: "curve",
+    angle,
+    distance: Math.round(distance * scale),
+    anchor: "cursor",
+    stroke,
+    strokeWidth: widthOverride
+  });
+  const circle = (dx, dy, radius, stroke = primary, widthOverride = strokeWidth) => ({
+    type: "draw_path",
+    path: "circle",
+    position: point(dx, dy),
+    radius: Math.round(radius * scale),
+    stroke,
+    strokeWidth: widthOverride
+  });
+  return { primary, strokeWidth, move, line, curve, circle };
+}
+
+function catSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "black");
+  const detail = palette.black;
+  const accent = palette.pink;
+  return {
+    label: "小猫运笔配方",
+    plan: [
+      "先画小猫的圆头和身体",
+      "用三角线条画两只耳朵",
+      "补上眼睛、鼻子、胡须和尾巴"
+    ],
+    actions: [
+      tools.circle(0, -50, 42),
+      tools.circle(0, 32, 54),
+      tools.move(-34, -82),
+      tools.line(-118, 36),
+      tools.line(58, 36),
+      tools.line(180, 34),
+      tools.move(34, -82),
+      tools.line(-62, 36),
+      tools.line(122, 36),
+      tools.line(0, 34),
+      tools.circle(-15, -54, 8, detail, 3),
+      tools.circle(15, -54, 8, detail, 3),
+      tools.circle(0, -37, 8, accent, 3),
+      tools.move(-10, -30),
+      tools.curve(145, 34, detail, 3),
+      tools.move(10, -30),
+      tools.curve(35, 34, detail, 3),
+      tools.move(-13, -36),
+      tools.line(180, 42, detail, 3),
+      tools.move(-13, -31),
+      tools.line(162, 42, detail, 3),
+      tools.move(13, -36),
+      tools.line(0, 42, detail, 3),
+      tools.move(13, -31),
+      tools.line(18, 42, detail, 3),
+      tools.move(42, 40),
+      tools.curve(-42, 66)
+    ]
+  };
+}
+
+function dogSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "brown");
+  const detail = palette.black;
+  return {
+    label: "小狗运笔配方",
+    plan: [
+      "先画小狗的身体和圆头",
+      "画下垂耳朵、鼻子和眼睛",
+      "用短线补腿，再用曲线画尾巴"
+    ],
+    actions: [
+      tools.circle(25, 18, 54),
+      tools.circle(-48, -32, 36),
+      tools.circle(-76, -29, 23),
+      tools.circle(-20, -22, 20),
+      tools.circle(-58, -43, 7, detail, 3),
+      tools.circle(-10, -23, 7, detail, 3),
+      tools.move(-72, -16),
+      tools.curve(170, 34, detail, 3),
+      tools.move(2, 65),
+      tools.line(90, 36),
+      tools.move(43, 65),
+      tools.line(90, 36),
+      tools.move(76, 0),
+      tools.curve(-38, 58),
+      tools.move(-19, -9),
+      tools.curve(38, 32, detail, 3)
+    ]
+  };
+}
+
+function houseSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "brown");
+  const roof = palette.orange;
+  const detail = palette.black;
+  return {
+    label: "小房子运笔配方",
+    plan: [
+      "先用四条线画墙体",
+      "再用两条斜线画屋顶",
+      "最后补门和窗户"
+    ],
+    actions: [
+      tools.move(-82, -8),
+      tools.line(0, 164),
+      tools.line(90, 118),
+      tools.line(180, 164),
+      tools.line(-90, 118),
+      tools.move(-96, -8),
+      tools.line(-35, 116, roof),
+      tools.line(35, 116, roof),
+      tools.move(-24, 54),
+      tools.line(90, 72, detail, 3),
+      tools.line(0, 48, detail, 3),
+      tools.line(-90, 72, detail, 3),
+      tools.move(38, 26),
+      tools.line(0, 42, detail, 3),
+      tools.line(90, 42, detail, 3),
+      tools.line(180, 42, detail, 3),
+      tools.line(-90, 42, detail, 3)
+    ]
+  };
+}
+
+function flowerSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "pink");
+  const stem = palette.green;
+  const center = palette.yellow;
+  return {
+    label: "小花运笔配方",
+    plan: [
+      "用多个小圆画花瓣",
+      "画花心",
+      "向下画花茎和叶子"
+    ],
+    actions: [
+      tools.circle(0, -54, 18),
+      tools.circle(26, -28, 18),
+      tools.circle(0, -2, 18),
+      tools.circle(-26, -28, 18),
+      tools.circle(0, -28, 12, center, 3),
+      tools.move(0, -8),
+      tools.line(90, 104, stem, 4),
+      tools.move(0, 42),
+      tools.curve(38, 48, stem, 4),
+      tools.move(0, 55),
+      tools.curve(142, 48, stem, 4)
+    ]
+  };
+}
+
+function treeSketchRecipeFromText(text) {
+  const tools = sketchTools(text, "green");
+  const trunk = palette.brown;
+  return {
+    label: "小树运笔配方",
+    plan: [
+      "先画树冠的几个圆形轮廓",
+      "再画树干",
+      "补一条地面线让小树站住"
+    ],
+    actions: [
+      tools.circle(-34, -42, 36),
+      tools.circle(24, -55, 42),
+      tools.circle(45, -16, 36),
+      tools.circle(-12, -8, 42),
+      tools.move(-18, 25),
+      tools.line(90, 92, trunk, 5),
+      tools.move(18, 25),
+      tools.line(90, 92, trunk, 5),
+      tools.move(-52, 118),
+      tools.line(0, 104, trunk, 4)
+    ]
   };
 }
 
@@ -752,6 +1003,9 @@ function turtlePathFromText(text) {
   const starPlan = starPlanFromText(normalized);
   if (starPlan) return starPlan;
 
+  const objectRecipe = objectSketchRecipeFromText(normalized);
+  if (objectRecipe) return objectRecipe;
+
   const wantsTurtlePath = /海龟|画笔|路径|轮廓|一笔/.test(normalized);
   if (!wantsTurtlePath) return null;
 
@@ -850,8 +1104,8 @@ function parseCommand(text) {
   const normalized = normalizeSpeechText(text);
   const actions = [];
   const plans = [];
-  const hasSegmentBreak = /然后|再|并且|，|,|。|；|;/.test(String(text || ""));
-  const hasSequencingBreak = /然后|再|并且/.test(String(text || ""));
+  const hasSegmentBreak = /然后|再|并且|同时|一起|还有|和|，|,|。|；|;/.test(String(text || ""));
+  const hasSequencingBreak = /然后|再|并且|同时|一起|还有|和/.test(String(text || ""));
 
   if (/撤销|退回|上一步/.test(normalized)) {
     return { actions: [{ type: "undo" }] };
@@ -878,6 +1132,9 @@ function parseCommand(text) {
   const starPlan = starPlanFromText(normalized);
   if (starPlan && !hasSequencingBreak) return starPlan;
 
+  const objectRecipe = objectSketchRecipeFromText(normalized);
+  if (objectRecipe && !hasSequencingBreak) return objectRecipe;
+
   const pathCommand = pathCommandFromText(normalized);
   if (pathCommand && !hasSegmentBreak) return pathCommand;
 
@@ -889,7 +1146,7 @@ function parseCommand(text) {
 
   const segments = String(text || "")
     .toLowerCase()
-    .split(/然后|再|并且|，|,|。|；|;/)
+    .split(/然后|再|并且|同时|一起|还有|和|，|,|。|；|;/)
     .map((part) => normalizeSpeechText(part))
     .filter(Boolean);
 
@@ -912,6 +1169,13 @@ function parseCommand(text) {
     if (segmentStarPlan) {
       actions.push(...segmentStarPlan.actions);
       plans.push(...(segmentStarPlan.plan || []));
+      continue;
+    }
+
+    const segmentObjectRecipe = objectSketchRecipeFromText(segment);
+    if (segmentObjectRecipe) {
+      actions.push(...segmentObjectRecipe.actions);
+      plans.push(...(segmentObjectRecipe.plan || []));
       continue;
     }
 
@@ -977,7 +1241,8 @@ function parseCommand(text) {
 
   if (!actions.length) {
     return {
-      clarification: "我现在先支持一笔一笔画：直线、曲线、圆、画笔移动、颜色和线宽。"
+      clarification: "我现在先支持直线、曲线、圆、画笔移动，以及小狗、小猫、小房子、小花、小树等运笔配方。",
+      skipLlm: true
     };
   }
 
@@ -1253,24 +1518,24 @@ async function parseCommandSmart(text) {
   }
 
   state.llmInFlight = true;
-  setSpeechHint("复杂口令正在交给 DeepSeek 拆解，稍等一下。");
+  setSpeechHint(`复杂口令正在交给 ${state.llmProvider || "OpenAI"} 拆解，稍等一下。`);
 
   try {
     const result = await fetchLlmCommand(text);
     state.llmAvailable = true;
-    state.llmProvider = result.provider || "DeepSeek";
+    state.llmProvider = result.provider || "OpenAI";
     const dsl = sanitizeDsl(result.dsl || result);
     if (isExecutableDsl(dsl)) {
       addLog(`${state.llmProvider} 已拆解复杂口令`);
-      return { ...dsl, source: "deepseek_llm" };
+      return { ...dsl, source: `${state.llmProvider.toLowerCase()}_llm` };
     }
     return dsl;
   } catch (error) {
     if (error.status === 404 || error.status === 503) {
       state.llmAvailable = false;
     }
-    addLog(`DeepSeek 解析不可用，已回退本地规则：${error.message}`, "error");
-    setSpeechHint("DeepSeek 解析暂不可用，已使用本地规则继续执行。", "warning");
+    addLog(`${state.llmProvider || "OpenAI"} 解析不可用，已回退本地规则：${error.message}`, "error");
+    setSpeechHint(`${state.llmProvider || "OpenAI"} 解析暂不可用，已使用本地规则继续执行。`, "warning");
     return { ...localDsl, source: "local_rules_fallback" };
   } finally {
     state.llmInFlight = false;
@@ -2307,7 +2572,7 @@ async function checkLlmStatus() {
     }
     const status = await response.json();
     state.llmAvailable = Boolean(status.configured);
-    state.llmProvider = status.provider || "DeepSeek";
+    state.llmProvider = status.provider || "OpenAI";
     if (status.configured) {
       addLog(`${state.llmProvider} 指令增强已连接：${status.model}`);
     }

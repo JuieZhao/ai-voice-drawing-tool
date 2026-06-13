@@ -45,17 +45,17 @@ function cleanApiKey(value) {
   return key;
 }
 
-function cleanThinkingMode(value) {
-  const mode = String(value || "disabled").trim().toLowerCase();
-  return ["enabled", "disabled", "off"].includes(mode) ? mode : "disabled";
+function cleanReasoningEffort(value) {
+  const effort = String(value || "low").trim().toLowerCase();
+  return ["none", "low", "medium", "high", "xhigh"].includes(effort) ? effort : "low";
 }
 
 const providerConfig = {
-  provider: process.env.LLM_PROVIDER || "DeepSeek",
-  apiKey: cleanApiKey(process.env.DEEPSEEK_API_KEY || process.env.LLM_API_KEY),
-  baseUrl: process.env.DEEPSEEK_BASE_URL || process.env.LLM_BASE_URL || "https://api.deepseek.com",
-  model: process.env.DEEPSEEK_MODEL || process.env.LLM_MODEL || "deepseek-v4-flash",
-  thinking: cleanThinkingMode(process.env.DEEPSEEK_THINKING || process.env.LLM_THINKING)
+  provider: process.env.LLM_PROVIDER || "OpenAI",
+  apiKey: cleanApiKey(process.env.OPENAI_API_KEY || process.env.LLM_API_KEY),
+  baseUrl: process.env.OPENAI_BASE_URL || process.env.LLM_BASE_URL || "https://api.openai.com/v1",
+  model: process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-5.4-mini",
+  reasoningEffort: cleanReasoningEffort(process.env.OPENAI_REASONING_EFFORT || process.env.LLM_REASONING_EFFORT)
 };
 
 const commandSystemPrompt = `
@@ -164,10 +164,167 @@ EXAMPLE JSON OUTPUT:
 }
 `.trim();
 
-function chatCompletionsUrl(baseUrl) {
+const dslResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    plan: {
+      type: ["array", "null"],
+      items: { type: "string" }
+    },
+    actions: {
+      type: ["array", "null"],
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          type: {
+            type: "string",
+            enum: [
+              "move_cursor",
+              "draw_path",
+              "update_object",
+              "resize_object",
+              "move_object",
+              "delete_object",
+              "undo",
+              "redo",
+              "clear_canvas",
+              "pen_down",
+              "pen_up",
+              "turtle_forward",
+              "turtle_turn",
+              "turtle_home",
+              "turtle_color",
+              "turtle_width",
+              "set_grid"
+            ]
+          },
+          path: { type: ["string", "null"], enum: ["line", "curve", "circle", null] },
+          direction: { type: ["string", "null"], enum: ["left", "right", "up", "down", "forward", null] },
+          stroke: { type: ["string", "null"] },
+          fill: { type: ["string", "null"] },
+          strokeWidth: { type: ["number", "null"] },
+          distance: { type: ["number", "null"] },
+          radius: { type: ["number", "null"] },
+          gridUnits: { type: ["number", "null"] },
+          radiusGridUnits: { type: ["number", "null"] },
+          angle: { type: ["number", "null"] },
+          anchor: { type: ["string", "null"], enum: ["cursor", "last_end", "center", "left", "right", "top", "bottom", null] },
+          target: { type: ["string", "null"], enum: ["last_created", "circle", "rect", "triangle", "line", "arrow", "text", "stroke", null] },
+          position: {
+            type: ["string", "null"],
+            enum: [
+              "center",
+              "left",
+              "right",
+              "top",
+              "bottom",
+              "top_left",
+              "top_right",
+              "bottom_left",
+              "bottom_right",
+              "A1",
+              "B1",
+              "C1",
+              "A2",
+              "B2",
+              "C2",
+              "A3",
+              "B3",
+              "C3",
+              null
+            ]
+          },
+          updates: {
+            type: ["object", "null"],
+            additionalProperties: false,
+            properties: {
+              fill: { type: ["string", "null"] }
+            },
+            required: ["fill"]
+          },
+          scale: { type: ["number", "null"] },
+          visible: { type: ["boolean", "null"] },
+          width: { type: ["number", "null"] }
+        },
+        required: [
+          "type",
+          "path",
+          "direction",
+          "stroke",
+          "fill",
+          "strokeWidth",
+          "distance",
+          "radius",
+          "gridUnits",
+          "radiusGridUnits",
+          "angle",
+          "anchor",
+          "target",
+          "position",
+          "updates",
+          "scale",
+          "visible",
+          "width"
+        ]
+      }
+    },
+    clarification: { type: ["string", "null"] }
+  },
+  required: ["plan", "actions", "clarification"]
+};
+
+function openAiResponsesUrl(baseUrl) {
   const trimmed = String(baseUrl || "").replace(/\/+$/, "");
-  if (trimmed.endsWith("/chat/completions")) return trimmed;
-  return `${trimmed}/chat/completions`;
+  if (trimmed.endsWith("/responses")) return trimmed;
+  return `${trimmed}/responses`;
+}
+
+function openAiRequestBody(text, context) {
+  return {
+    model: providerConfig.model,
+    instructions: commandSystemPrompt,
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: JSON.stringify({
+              voiceText: text,
+              canvasContext: context || {}
+            })
+          }
+        ]
+      }
+    ],
+    reasoning: { effort: providerConfig.reasoningEffort },
+    text: {
+      format: {
+        type: "json_schema",
+        name: "voice_drawing_dsl",
+        strict: true,
+        schema: dslResponseSchema
+      }
+    },
+    max_output_tokens: 1200,
+    store: false
+  };
+}
+
+function extractOpenAiOutputText(data) {
+  if (typeof data?.output_text === "string") return data.output_text;
+
+  const chunks = [];
+  for (const item of data?.output || []) {
+    for (const part of item?.content || []) {
+      if (typeof part?.text === "string") {
+        chunks.push(part.text);
+      }
+    }
+  }
+  return chunks.join("\n");
 }
 
 function sendJson(response, status, payload) {
@@ -211,6 +368,7 @@ function stripCodeFence(text) {
 }
 
 function parseModelJson(text) {
+  if (text && typeof text === "object") return text;
   const cleaned = stripCodeFence(text);
   try {
     return JSON.parse(cleaned);
@@ -230,7 +388,7 @@ async function handleLlmCommand(request, response) {
   if (!providerConfig.apiKey) {
     sendJson(response, 503, {
       error: "LLM_NOT_CONFIGURED",
-      message: "请先配置 DEEPSEEK_API_KEY 或 LLM_API_KEY。"
+      message: "请先配置 OPENAI_API_KEY 或 LLM_API_KEY。"
     });
     return;
   }
@@ -249,30 +407,11 @@ async function handleLlmCommand(request, response) {
     return;
   }
 
-  const requestBody = {
-    model: providerConfig.model,
-    messages: [
-      { role: "system", content: commandSystemPrompt },
-      {
-        role: "user",
-        content: JSON.stringify({
-          voiceText: text,
-          canvasContext: payload.context || {}
-        })
-      }
-    ],
-    response_format: { type: "json_object" },
-    stream: false,
-    max_tokens: 900
-  };
-
-  if (providerConfig.thinking !== "off") {
-    requestBody.thinking = { type: providerConfig.thinking };
-  }
+  const requestBody = openAiRequestBody(text, payload.context || {});
 
   let apiResponse;
   try {
-    apiResponse = await fetch(chatCompletionsUrl(providerConfig.baseUrl), {
+    apiResponse = await fetch(openAiResponsesUrl(providerConfig.baseUrl), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -308,7 +447,7 @@ async function handleLlmCommand(request, response) {
     return;
   }
 
-  const content = data.choices?.[0]?.message?.content || "";
+  const content = extractOpenAiOutputText(data);
   if (!content.trim()) {
     sendJson(response, 502, {
       error: "LLM_EMPTY_CONTENT",
@@ -337,7 +476,7 @@ function handleLlmStatus(response) {
     configured: Boolean(providerConfig.apiKey),
     baseUrl: providerConfig.baseUrl,
     model: providerConfig.model,
-    thinking: providerConfig.thinking
+    reasoningEffort: providerConfig.reasoningEffort
   });
 }
 
