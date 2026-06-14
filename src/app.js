@@ -109,7 +109,10 @@ const state = {
   drawCursor: { active: false, x: 0.5, y: 0.5 },
   llmAvailable: null,
   llmInFlight: false,
-  llmProvider: ""
+  llmProvider: "",
+  lastLogMessage: "",
+  lastLogType: "",
+  lastLogAt: 0
 };
 
 function uid(prefix = "obj") {
@@ -241,9 +244,28 @@ function pushHistory() {
   state.redo = [];
 }
 
+function isPassiveSpeechLog(message) {
+  return [
+    /^监听中，但暂未识别到语音$/,
+    /^没有检测到语音/,
+    /^没有识别到完整语音/,
+    /^继续监听中/,
+    /^本句监听结束/,
+    /^听到声音，但未返回文字$/,
+    /^听到声音但未识别出文字$/
+  ].some((pattern) => pattern.test(message));
+}
+
 function addLog(message, type = "info") {
+  const text = String(message || "").trim();
+  if (!text || isPassiveSpeechLog(text)) return;
+  const now = Date.now();
+  if (state.lastLogMessage === text && state.lastLogType === type && now - state.lastLogAt < 1500) return;
+  state.lastLogMessage = text;
+  state.lastLogType = type;
+  state.lastLogAt = now;
   const item = document.createElement("li");
-  item.textContent = message;
+  item.textContent = text;
   if (type === "error") {
     item.classList.add("is-error");
   }
@@ -296,8 +318,7 @@ function startSilenceTimer() {
   state.speechStarted = false;
   state.silenceTimer = window.setTimeout(() => {
     if (state.listening && !state.speechStarted) {
-      setSpeechHint("还没有识别到声音。请确认浏览器允许麦克风、系统输入设备正确，并尽量使用 Chrome 打开 http://localhost:5173。", "warning");
-      addLog("监听中，但暂未识别到语音", "error");
+      setSpeechHint("监听中，等待你的绘图指令。", "warning");
     }
   }, 7000);
 }
@@ -3479,6 +3500,10 @@ function shouldAutoRestart(error) {
   return state.listening && !state.stopRequested && ["no-speech", "aborted"].includes(error);
 }
 
+function isPassiveSpeechError(error) {
+  return ["no-speech", "aborted"].includes(error);
+}
+
 function startRecognitionLoop() {
   if (!state.recognition || state.recognitionActive) return;
   clearRestartTimer();
@@ -3560,8 +3585,12 @@ function setupSpeech() {
   };
   recognition.onerror = (event) => {
     const message = speechErrorMessage(event.error);
-    setSpeechHint(message, "error");
-    addLog(message, "error");
+    if (isPassiveSpeechError(event.error)) {
+      setSpeechHint("监听中，等待你的绘图指令。", "warning");
+    } else {
+      setSpeechHint(message, "error");
+      addLog(message, "error");
+    }
     state.recognitionActive = false;
     clearSilenceTimer();
     clearResultTimer();
@@ -3570,7 +3599,7 @@ function setupSpeech() {
       return;
     }
     if (shouldAutoRestart(event.error)) {
-      scheduleRecognitionRestart("没有识别到完整语音");
+      scheduleRecognitionRestart(isPassiveSpeechError(event.error) ? "继续监听中" : "没有识别到完整语音");
       return;
     }
     setListening(false);
