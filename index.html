@@ -5,15 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>声绘板 VoxCanvas</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/styles.css" />
+    <link rel="stylesheet" href="./src/styles.css?v=20260614-studio-polish" />
   </head>
   <body>
     <main class="app-shell">
       <section class="studio">
         <header class="topbar">
-          <div>
-            <p class="eyebrow">Voice Drawing Studio</p>
-            <h1>声绘板</h1>
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true">声</span>
+            <div>
+              <p class="eyebrow">Voice Drawing Studio</p>
+              <h1>声绘板 <span>VoxCanvas</span></h1>
+            </div>
           </div>
           <div class="status-cluster">
             <span id="speechStatus" class="status-pill">待启动</span>
@@ -26,24 +29,38 @@
         <section class="workspace">
           <aside class="side-panel left-panel" aria-label="语音与执行状态">
             <div class="panel-block transcript-block">
-              <p class="panel-label">当前语音</p>
+              <div class="panel-heading">
+                <p class="panel-label">当前语音</p>
+                <span class="panel-kicker">Live</span>
+              </div>
               <p id="transcriptText" class="transcript">等待语音输入</p>
               <p id="speechHint" class="speech-hint">点击右上角麦克风后开始讲话。</p>
             </div>
 
             <div class="panel-block log-block">
-              <p class="panel-label">执行日志</p>
+              <div class="panel-heading">
+                <p class="panel-label">执行日志</p>
+                <span class="panel-kicker">Trace</span>
+              </div>
               <ol id="logList" class="log-list"></ol>
             </div>
           </aside>
 
           <section class="canvas-stage" aria-label="绘图画布">
+            <div class="canvas-rail" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
             <canvas id="drawingCanvas"></canvas>
           </section>
 
           <aside class="side-panel right-panel" aria-label="画布对象">
             <div class="panel-block score-block">
-              <p class="panel-label">画布状态</p>
+              <div class="panel-heading">
+                <p class="panel-label">画布状态</p>
+                <span class="panel-kicker">Stats</span>
+              </div>
               <dl class="metrics">
                 <div>
                   <dt>对象</dt>
@@ -61,17 +78,26 @@
             </div>
 
             <div class="panel-block">
-              <p class="panel-label">对象列表</p>
+              <div class="panel-heading">
+                <p class="panel-label">对象列表</p>
+                <span class="panel-kicker">Layers</span>
+              </div>
               <ul id="layerList" class="layer-list"></ul>
             </div>
 
             <div class="panel-block plan-block">
-              <p class="panel-label">绘制步骤</p>
+              <div class="panel-heading">
+                <p class="panel-label">绘制步骤</p>
+                <span class="panel-kicker">Plan</span>
+              </div>
               <ol id="planList" class="plan-list"></ol>
             </div>
 
             <div class="panel-block dsl-block">
-              <p class="panel-label">最近 DSL</p>
+              <div class="panel-heading">
+                <p class="panel-label">最近 DSL</p>
+                <span class="panel-kicker">JSON</span>
+              </div>
               <pre id="dslOutput">{}</pre>
             </div>
           </aside>
