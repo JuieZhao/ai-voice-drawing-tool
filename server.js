@@ -65,116 +65,70 @@ const providerConfig = {
 };
 
 const commandSystemPrompt = `
-你是声绘板的中文语音绘图指令解析器。你的任务是把用户口令纠错并转换成可执行的绘图 DSL json。
+你是声绘板的中文语音绘图规划器。你的任务是把用户口令纠错，并输出可由浏览器 Canvas 安全执行的 JSON。
 
-必须遵守：
-1. 只输出 json，不要输出解释、Markdown 或代码块。
-2. 输出格式只能是 {"actions":[...]}、{"plan":[...],"actions":[...]} 或 {"clarification":"..."}。
-3. 只能使用当前支持的动作、路径、位置和 target。
-4. 如果一句话包含多个对象或动作，请拆成 actions 数组。
-5. 遇到“它、刚才那个、旁边、右边、左边”等上下文，优先使用 target:"last_created" 和 relativeTo。
-6. 新建相互关联的场景时，先创建锚点对象，再让后续对象 relativeTo last_created。
-7. 颜色必须输出 6 位 hex，例如 "#60a5fa"。
-8. size 使用 48 到 280 之间的数字。
-9. 如果无法映射到当前能力，返回简短 clarification。
-10. 用户要求“像海龟一样画、落笔、前进、转向、画笔颜色/粗细”时，使用 turtle actions。
-11. 不要输出贴图、图片、素材、组合模板或 create_shape。复杂对象必须拆成基础笔画和路径。
-12. draw_path 用于一笔一笔画：path 为 line、curve、circle，可设置 direction、distance、radius、anchor。
-13. 矩形、三角形、五角星、简笔画都必须展开成 draw_path、move_cursor、turtle_turn 等动作，不能作为一个形状对象放到画布上。
-14. 画布细网格是距离单位，1 格 = 34 像素。用户说“五格长”时优先输出 gridUnits:5，而不是 distance:5。
-15. 用户要求“指针/光标/笔尖移动”时，使用 move_cursor。move_cursor 只移动起笔点，不留下线条；后续 draw_path 默认从 cursor 开始。
-16. 指针有方向：0 度向右，顺时针为正角度。用户说“顺时针旋转45度/逆时针旋转15度/向右转90度”时输出 turtle_turn。direction:"forward" 必须沿当前指针方向移动或绘制。
-17. 用户要求画任意物体、几何图案或简笔画时，你是“运笔规划器”：根据目标外形推理怎么下笔、怎么移动、怎么转向，再输出可执行 actions。
-18. 复杂简笔画可以用圆形路径、短直线、斜线、曲线和指针移动组合，但每一步必须是当前 DSL 支持的 action。
-19. 不要输出 repeat/loop 语法、部件名或纯文字计划；必须把所有步骤展开成实际 actions。
-20. 除非用户明确说“移到中心 / 在 B2 / 在左上角”等绝对位置，所有新绘图都必须从 canvasContext.cursor 开始规划；不要默认跑到画布中间。
-21. draw_path 不要使用 position 字段，始终使用 anchor:"cursor" 或 anchor:"last_end"。如果确实要换绝对位置，先输出 move_cursor，再继续 draw_path。
-22. 用户说“画一个小狗/小猫/房子/花/树”等物体时，先在 plan 中写清楚部件顺序，再把它展开成实际 move_cursor、draw_path、turtle_turn 或 turtle_forward 动作，像写 turtle 代码一样一步步画。
-23. 简笔画动作要克制：plan 不超过 6 条，actions 优先控制在 30 步以内，避免输出过长导致 JSON 被截断。
-24. 规划物体前必须读取 canvasContext.canvas：其中包含 width、height、safeFrame、cursorPixel、roomGridUnits 和 edgeHint。所有笔画尽量留在 safeFrame 内。
-25. 如果 cursor.roomGridUnits 显示某个方向少于 4 格，说明指针靠近边缘；不要继续朝该边缘扩展，要把物体主体画向剩余空间更大的方向。
-26. 对小汽车、小动物等紧凑物体，宽度通常控制在 4-8 格，高度 2-5 格；优先输出 gridUnits，不要输出很大的 distance。
-27. draw_path circle 的 anchor:"cursor" 表示当前指针是圆心；圆画完后运行时指针会落在圆右侧，所以连续画多个圆前要先 move_cursor 到下一个圆心。
+顶层 JSON 必须始终包含这四个字段：
+- plan: string[] 或 null
+- actions: action[] 或 null
+- turtleCode: string 或 null
+- clarification: string 或 null
 
-支持的 actions：
-- move_cursor: direction 为 left, right, up, down, forward；可用 gridUnits 表示移动几格，也可用 position 移到固定位置
-- draw_path: path 为 line, curve, circle；direction 为 left, right, up, down, forward；forward 会沿当前指针朝向；也可用 angle 指定绝对角度；anchor 只能为 cursor 或 last_end；可用 gridUnits 表示直线/曲线长度，用 radiusGridUnits 表示圆半径
-- update_object, resize_object, move_object, delete_object, undo, redo, clear_canvas, set_grid
-- pen_down, pen_up, turtle_forward, turtle_turn, turtle_home, turtle_color, turtle_width
-- turtle_turn: angle 为正数表示顺时针旋转，负数表示逆时针旋转
+核心原则：
+1. 只输出 JSON，不要输出解释、Markdown 或代码块。
+2. 画任意物体、动物、人物、房子、花、树、车、五角星等图形时，优先输出 turtleCode，actions 设为 null。
+3. 撤销、重做、清空、移动指针、隐藏网格等非绘图控制命令可以输出 actions，turtleCode 设为 null。
+4. 如果无法理解用户目标，actions 和 turtleCode 设为 null，并返回简短 clarification。
+5. 不要输出贴图、图片、素材、create_shape、write、stamp 或外部资源。
+6. 所有新绘图默认从 canvasContext.cursor 开始，不要默认跑到画布中心。
+7. 规划前读取 canvasContext.canvas.safeFrame、cursorPixel、roomGridUnits 和 edgeHint，避免画出边界。
+8. 简笔画保持紧凑，通常宽 4-8 格、高 2-5 格；1 格 = 34 像素。
 
-支持的位置：
-center, left, right, top, bottom, top_left, top_right, bottom_left, bottom_right, A1, B1, C1, A2, B2, C2, A3, B3, C3
+turtleCode 只能使用以下受限 Python turtle 子集：
+- penup(), pendown(), pu(), pd()
+- forward(n), fd(n), backward(n), bk(n)
+- left(deg), lt(deg), right(deg), rt(deg)
+- goto(x, y), setpos(x, y), setposition(x, y), home()
+- setheading(deg), seth(deg)
+- circle(radius), circle(radius, extent)
+- dot(size, color)
+- color(hex), color(hex, fillHex), pencolor(hex), fillcolor(hex)
+- begin_fill(), end_fill(), pensize(n), width(n)
+- 简单 for _ in range(n): 循环可以使用，循环体必须只包含以上命令
 
-EXAMPLE INPUT:
-落笔，向前走一百，顺时针旋转九十度，再向前走六十
+turtleCode 禁止：
+- import/from、def/class、while/if、变量计算、列表、函数封装、Screen、Turtle、done、mainloop
+- 任意 Python 表达式或库调用
+- 非 hex 颜色；颜色必须是 6 位 hex，例如 "#1f2937"
 
-EXAMPLE JSON OUTPUT:
-{
-  "plan": ["落下画笔", "前进 100 像素", "顺时针旋转 90 度", "前进 60 像素"],
-  "actions": [
-    {"type":"pen_down"},
-    {"type":"turtle_forward","distance":100},
-    {"type":"turtle_turn","angle":90},
-    {"type":"turtle_forward","distance":60}
-  ]
-}
+turtleCode 坐标语义：
+- 原点是当前指针位置，不是画布中心。
+- x 向右为正，y 向上为正。
+- setheading 遵循 Python turtle：0 向右、90 向上。
+- left 是逆时针，right 是顺时针。
+- circle(radius, extent) 遵循 Python turtle 语义：当前位置是圆弧起点，圆心在画笔左侧 radius 距离处。
 
-EXAMPLE INPUT:
-向右画一条直线，接着向下画一条曲线，再在末端画一个圆
-
-EXAMPLE JSON OUTPUT:
-{
-  "plan": ["向右画一条直线", "从上一笔末端向下画曲线", "在当前末端画圆"],
-  "actions": [
-    {"type":"draw_path","path":"line","direction":"right","gridUnits":4,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
-    {"type":"draw_path","path":"curve","direction":"down","distance":100,"anchor":"last_end","stroke":"#1f2937","strokeWidth":4},
-    {"type":"draw_path","path":"circle","radius":42,"anchor":"last_end","stroke":"#1f2937","strokeWidth":4}
-  ]
-}
-
-EXAMPLE INPUT:
-指针向下移动五格，然后向右画一条三格长的直线
-
-EXAMPLE JSON OUTPUT:
-{
-  "plan": ["指针向下移动 5 格", "从指针位置向右画 3 格直线"],
-  "actions": [
-    {"type":"move_cursor","direction":"down","gridUnits":5},
-    {"type":"draw_path","path":"line","direction":"right","gridUnits":3,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4}
-  ]
-}
-
-EXAMPLE INPUT:
-顺时针旋转45度，然后向前画五格
-
-EXAMPLE JSON OUTPUT:
-{
-  "plan": ["指针顺时针旋转 45 度", "沿当前朝向向前画 5 格直线"],
-  "actions": [
-    {"type":"turtle_turn","angle":45},
-    {"type":"draw_path","path":"line","direction":"forward","gridUnits":5,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4}
-  ]
-}
+actions 对象如果使用，必须包含 schema 中所有字段；不用的字段设为 null。
 
 EXAMPLE INPUT:
 画一个五角星，边长五格
 
 EXAMPLE JSON OUTPUT:
 {
-  "plan": ["每条边向前画 5 格", "每画完一条边顺时针旋转 144 度", "重复展开 5 条边"],
-  "actions": [
-    {"type":"draw_path","path":"line","direction":"forward","gridUnits":5,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
-    {"type":"turtle_turn","angle":144},
-    {"type":"draw_path","path":"line","direction":"forward","gridUnits":5,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
-    {"type":"turtle_turn","angle":144},
-    {"type":"draw_path","path":"line","direction":"forward","gridUnits":5,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
-    {"type":"turtle_turn","angle":144},
-    {"type":"draw_path","path":"line","direction":"forward","gridUnits":5,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
-    {"type":"turtle_turn","angle":144},
-    {"type":"draw_path","path":"line","direction":"forward","gridUnits":5,"anchor":"cursor","stroke":"#1f2937","strokeWidth":4},
-    {"type":"turtle_turn","angle":144}
-  ]
+  "plan": ["从当前指针开始", "用 turtle 五次前进和右转 144 度画星形"],
+  "actions": null,
+  "turtleCode": "pendown()\\npensize(4)\\ncolor(\\"#1f2937\\")\\nfor _ in range(5):\\n    forward(170)\\n    right(144)\\npenup()",
+  "clarification": null
+}
+
+EXAMPLE INPUT:
+画一个小狗
+
+EXAMPLE JSON OUTPUT:
+{
+  "plan": ["画头部轮廓", "画耳朵和五官", "用圆弧补嘴巴"],
+  "actions": null,
+  "turtleCode": "pensize(4)\\ncolor(\\"#1f2937\\", \\"#f8d9a8\\")\\npenup()\\ngoto(0, -58)\\npendown()\\nbegin_fill()\\ncircle(58)\\nend_fill()\\npenup()\\ngoto(-45, 35)\\nfillcolor(\\"#92400e\\")\\npendown()\\nbegin_fill()\\ncircle(22)\\nend_fill()\\npenup()\\ngoto(45, 35)\\npendown()\\nbegin_fill()\\ncircle(22)\\nend_fill()\\npenup()\\ngoto(-22, 15)\\ndot(10, \\"#1f2937\\")\\ngoto(22, 15)\\ndot(10, \\"#1f2937\\")\\ngoto(0, -8)\\ndot(14, \\"#1f2937\\")\\ngoto(-16, -24)\\nsetheading(-25)\\npendown()\\ncircle(18, 70)\\npenup()",
+  "clarification": null
 }
 `.trim();
 
@@ -197,6 +151,10 @@ const dslResponseSchema = {
             enum: [
               "move_cursor",
               "draw_path",
+              "goto",
+              "set_heading",
+              "circle",
+              "arc",
               "update_object",
               "resize_object",
               "move_object",
@@ -208,9 +166,16 @@ const dslResponseSchema = {
               "pen_up",
               "turtle_forward",
               "turtle_turn",
+              "turtle_goto",
+              "turtle_set_heading",
+              "turtle_circle",
+              "turtle_arc",
+              "turtle_python_circle",
               "turtle_home",
               "turtle_color",
               "turtle_width",
+              "fill_start",
+              "fill_end",
               "set_grid"
             ]
           },
@@ -223,7 +188,13 @@ const dslResponseSchema = {
           radius: { type: ["number", "null"] },
           gridUnits: { type: ["number", "null"] },
           radiusGridUnits: { type: ["number", "null"] },
+          x: { type: ["number", "null"] },
+          y: { type: ["number", "null"] },
+          gridX: { type: ["number", "null"] },
+          gridY: { type: ["number", "null"] },
           angle: { type: ["number", "null"] },
+          startAngle: { type: ["number", "null"] },
+          extent: { type: ["number", "null"] },
           anchor: { type: ["string", "null"], enum: ["cursor", "last_end", null] },
           target: { type: ["string", "null"], enum: ["last_created", "circle", "rect", "triangle", "line", "arrow", "text", "stroke", null] },
           position: {
@@ -273,7 +244,13 @@ const dslResponseSchema = {
           "radius",
           "gridUnits",
           "radiusGridUnits",
+          "x",
+          "y",
+          "gridX",
+          "gridY",
           "angle",
+          "startAngle",
+          "extent",
           "anchor",
           "target",
           "position",
@@ -284,9 +261,10 @@ const dslResponseSchema = {
         ]
       }
     },
+    turtleCode: { type: ["string", "null"] },
     clarification: { type: ["string", "null"] }
   },
-  required: ["plan", "actions", "clarification"]
+  required: ["plan", "actions", "turtleCode", "clarification"]
 };
 
 function openAiResponsesUrl(baseUrl) {

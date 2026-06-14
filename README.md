@@ -20,14 +20,14 @@
 项目主线不是“语音文生图”，而是：
 
 ```text
-语音输入 -> 语音识别 -> 指令解析 -> 绘图 DSL -> Canvas 渲染 -> 语音继续编辑
+语音输入 -> 语音识别 -> 指令解析 -> 受限 turtleCode / 绘图 DSL -> Canvas 渲染 -> 语音继续编辑
 ```
 
-AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可校验的绘图动作。当前 MVP 不再走“语音贴模板”的路线，而是先把直线、曲线、圆、画笔移动、上下文引用和一批稳定运笔配方做好；复杂口令可选接入 OpenAI，把纠错后的中文口令转换为绘图 DSL。
+AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可校验的绘图动作。当前 MVP 不再走“语音贴模板”的路线，也不把画面完全交给 LLM 自由发挥；复杂绘图优先让 OpenAI 输出受限 Python turtle 风格代码，再由前端安全解析成 Canvas 运笔步骤。
 
 当前绘图主线是“一笔一笔画”。用户可以说“向右画一条直线”“接着向下画一条曲线”“在末端画一个圆”，系统会记录上一笔的末端、中心和边界，让下一句命令能接着上一句继续画。
 
-它的交互模型接近 Python turtle，但不是直接调用 turtle 库：用户用自然语言描述动作，系统把它转成 `draw_path` / turtle-like DSL，再由 Canvas 在画布上逐步呈现。
+它的交互模型接近 Python turtle，但不是直接运行 Python：用户用自然语言描述动作，系统把它转成受限 `turtleCode` 或 `draw_path` / turtle-like DSL，再由 Canvas 在画布上逐步呈现。
 
 ## 当前能力
 
@@ -44,7 +44,9 @@ AI 与 Prompt 工程的重点在于把自然语言转成稳定、可执行、可
 - 支持相对位置：“从刚才的圆右边继续画直线”
 - 支持撤销、重做、清空画布
 - 支持绘制步骤面板：展示路径或画笔动作的拆解过程
-- 支持海龟式画笔控制：落笔、抬笔、前进、后退、顺时针/逆时针旋转、回中心、改画笔颜色、改线宽，并可辅助绘制正方形、三角形
+- 支持海龟式画笔控制：落笔、抬笔、前进、后退、顺时针/逆时针旋转、回中心、改画笔颜色、改线宽
+- 扩展 turtle-like DSL：支持 `goto` 局部坐标、`set_heading`、以当前指针为圆心的 `circle`、圆弧 `arc`、`fill_start` / `fill_end`
+- 支持受限 Python turtle 代码解析：`forward`、`left/right`、`goto`、`circle`、`dot`、`begin_fill/end_fill` 和简单 `for range` 会被安全翻译为 Canvas 运笔动作
 - 支持可选 OpenAI 复杂口令解析，失败时自动回退本地规则
 - 展示最近一次绘图 DSL 和执行日志
 - 统一儿童绘本式扁平矢量风格
@@ -124,7 +126,7 @@ OPENAI_REASONING_EFFORT=low
 OPENAI_MAX_OUTPUT_TOKENS=6000
 ```
 
-当前默认模型使用 `gpt-5.4-mini`，优先保证响应速度和成本可控；如需更强的复杂口令拆解，可改为 `gpt-5.5`。后端使用 OpenAI Responses API，并通过 JSON Schema 约束模型输出为可执行绘图 DSL。复杂简笔画会产生较长 JSON，默认 `OPENAI_MAX_OUTPUT_TOKENS=6000`，避免“小狗、小猫”等多步骤规划被截断。
+当前默认模型使用 `gpt-5.4-mini`，优先保证响应速度和成本可控；如需更强的复杂口令拆解，可改为 `gpt-5.5`。后端使用 OpenAI Responses API，并通过 JSON Schema 约束模型输出为 `turtleCode` 或可执行绘图 DSL。复杂简笔画会产生较长代码，默认 `OPENAI_MAX_OUTPUT_TOKENS=6000`，避免“小狗、小猫”等多步骤规划被截断。
 
 ## 依赖与第三方说明
 
@@ -135,7 +137,7 @@ OPENAI_MAX_OUTPUT_TOKENS=6000
 - Canvas API：绘制路径笔画和逐步动画
 - Web Speech API：浏览器语音识别
 - MediaDevices `getUserMedia`：麦克风权限检测
-- 可选 OpenAI API：复杂口令纠错与绘图 DSL 生成
+- 可选 OpenAI API：复杂口令纠错、受限 turtle 代码和绘图 DSL 生成
 
 开发/验证工具：
 
@@ -193,11 +195,11 @@ OPENAI_MAX_OUTPUT_TOKENS=6000
 
 - 简单命令走本地解析，保证低延迟。
 - 复杂命令可选走 OpenAI 解析，保证自然语言理解上限。
-- LLM 输出必须经过本地 DSL 过滤，不能直接执行模型返回内容。
+- LLM 输出必须经过本地 `turtleCode` / DSL 过滤，不能直接执行模型返回内容。
 - 先把基础笔画、路径和上下文做好，而不是预制大量可贴放对象。
-- LLM 输出必须是可执行 DSL，优先生成 `draw_path`、指针移动和海龟动作。
-- 对“五角星、矩形、三角形、小狗、小猫、小房子”等稳定演示目标优先使用本地运笔配方，保证三天比赛版本稳定可演示。
-- 对未预制的小物体优先让 OpenAI 尝试拆成运笔步骤；如果 OpenAI 不可用，再回退到有限本地规则或提示用户简化。
+- 复杂物体优先让 LLM 输出受限 Python turtle 风格代码，例如 `forward`、`left/right`、`goto`、`circle`、`dot`、`begin_fill/end_fill` 和简单 `for range`，再由前端翻译成 Canvas 运笔动作。
+- 对“五角星、矩形、三角形、小狗、小猫、小房子”等稳定演示目标保留少量本地运笔配方兜底，保证三天比赛版本稳定可演示；它们仍然以画笔步骤呈现，不是贴图。
+- 对未预制的小物体优先让 OpenAI 尝试拆成 turtleCode；如果 OpenAI 不可用或输出不可执行，再回退到有限本地规则或提示用户简化。
 - 当前主动收窄复杂物体能力，避免作品变成语音贴纸工具。
 
 ## 持续交付
@@ -212,8 +214,8 @@ OPENAI_MAX_OUTPUT_TOKENS=6000
 
 ## 后续计划
 
-- 增加 JSON Schema 校验
-- 扩展 `draw_path`，支持贝塞尔曲线、圆弧和路径闭合
+- 持续收紧 JSON Schema 与 DSL 过滤
+- 扩展受限 turtleCode / `draw_path`，支持更自然的贝塞尔曲线、圆弧和闭合路径表现
 - 加强上下文选择，例如“选择上一条曲线”“从圆的左侧开始”
 - 支持导出 PNG / SVG
 - 增加语音确认与澄清流程

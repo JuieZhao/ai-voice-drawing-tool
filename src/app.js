@@ -52,6 +52,10 @@ const supportedTargets = ["last_created", ...supportedShapes, "stroke"];
 const supportedPositions = ["center", "left", "right", "top", "bottom", "top_left", "top_right", "bottom_left", "bottom_right", ...gridCells];
 const supportedPlacements = ["left", "right", "top", "bottom"];
 const supportedActions = [
+  "goto",
+  "set_heading",
+  "circle",
+  "arc",
   "move_cursor",
   "draw_path",
   "update_object",
@@ -65,9 +69,16 @@ const supportedActions = [
   "pen_up",
   "turtle_forward",
   "turtle_turn",
+  "turtle_goto",
+  "turtle_set_heading",
+  "turtle_circle",
+  "turtle_arc",
+  "turtle_python_circle",
   "turtle_home",
   "turtle_color",
   "turtle_width",
+  "fill_start",
+  "fill_end",
   "set_grid"
 ];
 const llmComplexPattern = /和|同时|一起|旁边|站在|天上|天空|地上|背景|场景|右边有|左边有|上面有|下面有|前面|后面|附近|周围|然后|再|并且/;
@@ -119,8 +130,12 @@ function initialTurtle() {
   return {
     x: 0.5,
     y: 0.5,
+    originX: 0.5,
+    originY: 0.5,
     angle: 0,
     penDown: false,
+    fillActive: false,
+    fill: "transparent",
     stroke: "#1f2937",
     strokeWidth: 4
   };
@@ -215,7 +230,7 @@ function restore(data) {
   state.lastObjectId = parsed.lastObjectId;
   state.actionTotal = parsed.actionTotal;
   state.latestPlan = parsed.latestPlan || [];
-  state.turtle = parsed.turtle || initialTurtle();
+  state.turtle = { ...initialTurtle(), ...(parsed.turtle || {}) };
 }
 
 function pushHistory() {
@@ -1082,9 +1097,19 @@ function turtleActionLabel(action) {
   if (action.type === "turtle_home") return "画笔回到中心，准备开始";
   if (action.type === "pen_down") return "落笔，开始留下线条";
   if (action.type === "pen_up") return "抬笔，结束这段路径";
+  if (action.type === "fill_start") return "开始填色后续闭合路径";
+  if (action.type === "fill_end") return "结束填色";
   if (action.type === "turtle_forward" && action.gridUnits) return `${action.distance >= 0 ? "前进" : "后退"} ${Math.abs(action.gridUnits)} 格`;
   if (action.type === "turtle_forward") return `${action.distance >= 0 ? "前进" : "后退"} ${Math.abs(action.distance)} 像素`;
   if (action.type === "turtle_turn") return turnActionLabel(action.angle);
+  if (action.type === "turtle_set_heading") return `设置朝向 ${headingLabel(action.angle)}`;
+  if (action.type === "turtle_goto") {
+    if (Number.isFinite(action.gridX) && Number.isFinite(action.gridY)) return `移动到局部坐标 (${action.gridX}, ${action.gridY}) 格`;
+    return `移动到局部坐标 (${Math.round(action.x || 0)}, ${Math.round(action.y || 0)})`;
+  }
+  if (action.type === "turtle_circle") return `以当前指针为圆心画半径 ${Math.round(action.radius || 36)} 像素的圆`;
+  if (action.type === "turtle_arc") return `以当前指针为圆心画 ${Math.round(action.extent || 120)} 度圆弧`;
+  if (action.type === "turtle_python_circle") return `按 Python turtle 语义画半径 ${Math.round(action.radius || 36)} 像素的圆弧`;
   return "执行画笔动作";
 }
 
@@ -1337,18 +1362,36 @@ function sanitizeRelativeTo(relativeTo) {
   return { target, placement };
 }
 
+function canonicalActionType(type) {
+  const aliases = {
+    goto: "turtle_goto",
+    set_heading: "turtle_set_heading",
+    circle: "turtle_circle",
+    arc: "turtle_arc"
+  };
+  return aliases[type] || type;
+}
+
 function sanitizeAction(action) {
   if (!action || typeof action !== "object" || !supportedActions.includes(action.type)) return null;
+  const actionType = canonicalActionType(action.type);
 
-  if (["undo", "redo", "clear_canvas"].includes(action.type)) {
-    return { type: action.type };
+  if (["undo", "redo", "clear_canvas"].includes(actionType)) {
+    return { type: actionType };
   }
 
-  if (action.type === "pen_down" || action.type === "pen_up" || action.type === "turtle_home") {
-    return { type: action.type };
+  if (actionType === "pen_down" || actionType === "pen_up" || actionType === "turtle_home" || actionType === "fill_end") {
+    return { type: actionType };
   }
 
-  if (action.type === "turtle_forward") {
+  if (actionType === "fill_start") {
+    return {
+      type: "fill_start",
+      fill: normalizeFill(action.fill, palette.yellow)
+    };
+  }
+
+  if (actionType === "turtle_forward") {
     const gridUnits = Number(action.gridUnits);
     const distance = Number(action.distance);
     const resolvedDistance = Number.isFinite(gridUnits) ? gridUnits * gridUnit : distance;
@@ -1359,7 +1402,7 @@ function sanitizeAction(action) {
     };
   }
 
-  if (action.type === "turtle_turn") {
+  if (actionType === "turtle_turn") {
     const angle = Number(action.angle);
     return {
       type: "turtle_turn",
@@ -1367,14 +1410,86 @@ function sanitizeAction(action) {
     };
   }
 
-  if (action.type === "turtle_color") {
+  if (actionType === "turtle_set_heading") {
+    const angle = Number(action.angle);
+    return {
+      type: "turtle_set_heading",
+      angle: Number.isFinite(angle) ? clamp(angle, -360, 360) : 0
+    };
+  }
+
+  if (actionType === "turtle_goto") {
+    const gridX = Number(action.gridX);
+    const gridY = Number(action.gridY);
+    const x = Number(action.x);
+    const y = Number(action.y);
+    const resolvedX = Number.isFinite(gridX) ? gridX * gridUnit : x;
+    const resolvedY = Number.isFinite(gridY) ? gridY * gridUnit : y;
+    return {
+      type: "turtle_goto",
+      x: Number.isFinite(resolvedX) ? clamp(resolvedX, -520, 520) : 0,
+      y: Number.isFinite(resolvedY) ? clamp(resolvedY, -360, 360) : 0,
+      gridX: Number.isFinite(gridX) ? clamp(gridX, -20, 20) : null,
+      gridY: Number.isFinite(gridY) ? clamp(gridY, -20, 20) : null
+    };
+  }
+
+  if (actionType === "turtle_circle") {
+    const radius = Number(action.radius);
+    const radiusGridUnits = Number(action.radiusGridUnits);
+    const strokeWidth = Number(action.strokeWidth);
+    return {
+      type: "turtle_circle",
+      radius: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits * gridUnit, 6, 180) : Number.isFinite(radius) ? clamp(radius, 6, 180) : 36,
+      radiusGridUnits: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits, 0.2, 10) : null,
+      stroke: normalizeFill(action.stroke || state.turtle.stroke, state.turtle.stroke),
+      fill: action.fill ? normalizeFill(action.fill, "transparent") : null,
+      strokeWidth: Number.isFinite(strokeWidth) ? clamp(strokeWidth, 1, 14) : state.turtle.strokeWidth
+    };
+  }
+
+  if (actionType === "turtle_arc") {
+    const radius = Number(action.radius);
+    const radiusGridUnits = Number(action.radiusGridUnits);
+    const extent = Number(action.extent);
+    const startAngle = Number(action.startAngle);
+    const strokeWidth = Number(action.strokeWidth);
+    return {
+      type: "turtle_arc",
+      radius: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits * gridUnit, 6, 180) : Number.isFinite(radius) ? clamp(radius, 6, 180) : 36,
+      radiusGridUnits: Number.isFinite(radiusGridUnits) ? clamp(radiusGridUnits, 0.2, 10) : null,
+      extent: Number.isFinite(extent) ? clamp(extent, -360, 360) : 120,
+      startAngle: Number.isFinite(startAngle) ? clamp(startAngle, -360, 360) : state.turtle.angle,
+      stroke: normalizeFill(action.stroke || state.turtle.stroke, state.turtle.stroke),
+      strokeWidth: Number.isFinite(strokeWidth) ? clamp(strokeWidth, 1, 14) : state.turtle.strokeWidth
+    };
+  }
+
+  if (actionType === "turtle_python_circle") {
+    const radius = Number(action.radius);
+    const extent = Number(action.extent);
+    const strokeWidth = Number(action.strokeWidth);
+    const safeRadius = Number.isFinite(radius) && Math.abs(radius) >= 4
+      ? clamp(radius, -180, 180)
+      : 36;
+    return {
+      type: "turtle_python_circle",
+      radius: safeRadius,
+      extent: Number.isFinite(extent) ? clamp(extent, -720, 720) : 360,
+      stroke: normalizeFill(action.stroke || state.turtle.stroke, state.turtle.stroke),
+      fill: action.fill ? normalizeFill(action.fill, "transparent") : null,
+      strokeWidth: Number.isFinite(strokeWidth) ? clamp(strokeWidth, 1, 14) : state.turtle.strokeWidth
+    };
+  }
+
+  if (actionType === "turtle_color") {
     return {
       type: "turtle_color",
       stroke: normalizeFill(action.stroke || action.fill, palette.black)
     };
   }
 
-  if (action.type === "turtle_width") {
+  if (actionType === "turtle_width") {
     const width = Number(action.width);
     return {
       type: "turtle_width",
@@ -1382,11 +1497,11 @@ function sanitizeAction(action) {
     };
   }
 
-  if (action.type === "set_grid") {
+  if (actionType === "set_grid") {
     return { type: "set_grid", visible: action.visible !== false };
   }
 
-  if (action.type === "move_cursor") {
+  if (actionType === "move_cursor") {
     const gridUnits = Number(action.gridUnits);
     const distance = Number(action.distance);
     const direction = ["left", "right", "up", "down", "forward"].includes(action.direction)
@@ -1402,7 +1517,7 @@ function sanitizeAction(action) {
     };
   }
 
-  if (action.type === "draw_path") {
+  if (actionType === "draw_path") {
     const path = ["line", "curve", "circle"].includes(action.path) ? action.path : "line";
     const gridUnits = Number(action.gridUnits);
     const radiusGridUnits = Number(action.radiusGridUnits);
@@ -1434,7 +1549,7 @@ function sanitizeAction(action) {
     };
   }
 
-  if (action.type === "create_shape") {
+  if (actionType === "create_shape") {
     const shape = supportedShapes.includes(action.shape) ? action.shape : null;
     if (!shape) return null;
     const size = Number(action.size);
@@ -1457,14 +1572,14 @@ function sanitizeAction(action) {
     };
   }
 
-  if (action.type === "update_object") {
+  if (actionType === "update_object") {
     const target = supportedTargets.includes(action.target) ? action.target : "last_created";
     const updates = {};
     if (action.updates?.fill) updates.fill = normalizeFill(action.updates.fill, palette.yellow);
     return Object.keys(updates).length ? { type: "update_object", target, updates } : null;
   }
 
-  if (action.type === "resize_object") {
+  if (actionType === "resize_object") {
     const target = supportedTargets.includes(action.target) ? action.target : "last_created";
     const scale = Number(action.scale);
     return {
@@ -1474,7 +1589,7 @@ function sanitizeAction(action) {
     };
   }
 
-  if (action.type === "move_object") {
+  if (actionType === "move_object") {
     const target = supportedTargets.includes(action.target) ? action.target : "last_created";
     return {
       type: "move_object",
@@ -1483,7 +1598,7 @@ function sanitizeAction(action) {
     };
   }
 
-  if (action.type === "delete_object") {
+  if (actionType === "delete_object") {
     const target = supportedTargets.includes(action.target) ? action.target : "last_created";
     return { type: "delete_object", target };
   }
@@ -1491,9 +1606,275 @@ function sanitizeAction(action) {
   return null;
 }
 
+function stripTurtleCodeFence(code) {
+  return String(code || "")
+    .replace(/^```(?:python|py|turtle)?\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+}
+
+function stripTurtleComment(line) {
+  let quote = "";
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    const previous = line[i - 1];
+    if ((char === "\"" || char === "'") && previous !== "\\") {
+      quote = quote === char ? "" : quote || char;
+    }
+    if (char === "#" && !quote) {
+      return line.slice(0, i);
+    }
+  }
+  return line;
+}
+
+function turtleIndent(line) {
+  const match = line.match(/^ */);
+  return match ? match[0].length : 0;
+}
+
+function turtleLoopCount(statement) {
+  const match = statement.match(/^for\s+\w+\s+in\s+range\(\s*(-?\d+)(?:\s*,\s*(-?\d+))?(?:\s*,\s*(-?\d+))?\s*\)\s*:\s*$/);
+  if (!match) return null;
+
+  let start = 0;
+  let end = Number(match[1]);
+  let step = 1;
+  if (match[2] !== undefined) {
+    start = Number(match[1]);
+    end = Number(match[2]);
+  }
+  if (match[3] !== undefined) {
+    step = Number(match[3]) || 1;
+  }
+
+  const rawCount = step > 0
+    ? Math.ceil((end - start) / step)
+    : Math.ceil((start - end) / Math.abs(step));
+  return clamp(Number.isFinite(rawCount) ? rawCount : 0, 0, 40);
+}
+
+function expandTurtleBlock(lines, startIndex = 0, indent = 0) {
+  const statements = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const lineIndent = turtleIndent(line);
+    if (lineIndent < indent) break;
+    if (lineIndent > indent) {
+      index += 1;
+      continue;
+    }
+
+    const statement = line.trim();
+    const loopCount = turtleLoopCount(statement);
+    if (loopCount !== null) {
+      const nextLine = lines[index + 1];
+      const nextIndent = nextLine ? turtleIndent(nextLine) : indent + 2;
+      if (!nextLine || nextIndent <= indent) {
+        index += 1;
+        continue;
+      }
+      const block = expandTurtleBlock(lines, index + 1, nextIndent);
+      for (let repeat = 0; repeat < loopCount; repeat += 1) {
+        statements.push(...block.statements);
+      }
+      index = block.nextIndex;
+      continue;
+    }
+
+    for (const part of statement.split(";")) {
+      const trimmed = part.trim();
+      if (trimmed) statements.push(trimmed);
+    }
+    index += 1;
+  }
+
+  return { statements, nextIndex: index };
+}
+
+function expandTurtleStatements(code) {
+  const clean = stripTurtleCodeFence(code);
+  const lines = clean
+    .replace(/\t/g, "    ")
+    .split(/\r?\n/)
+    .map(stripTurtleComment)
+    .filter((line) => line.trim());
+  return expandTurtleBlock(lines).statements.slice(0, 160);
+}
+
+function splitTurtleArgs(argsText) {
+  const args = [];
+  let current = "";
+  let quote = "";
+  let depth = 0;
+
+  for (let i = 0; i < argsText.length; i += 1) {
+    const char = argsText[i];
+    const previous = argsText[i - 1];
+    if ((char === "\"" || char === "'") && previous !== "\\") {
+      quote = quote === char ? "" : quote || char;
+      current += char;
+      continue;
+    }
+    if (!quote && (char === "(" || char === "[")) depth += 1;
+    if (!quote && (char === ")" || char === "]")) depth -= 1;
+    if (char === "," && !quote && depth === 0) {
+      args.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+
+  if (current.trim()) args.push(current.trim());
+  return args;
+}
+
+function turtleLiteral(token) {
+  const text = String(token || "").trim();
+  if (!text) return null;
+  const quoted = text.match(/^(['"])(.*)\1$/);
+  if (quoted) return quoted[2].replace(/\\(["'])/g, "$1");
+  if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text);
+  return null;
+}
+
+function turtleNumber(args, index, fallback = 0) {
+  const value = turtleLiteral(args[index]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function turtleColor(args, index, fallback = "") {
+  const value = turtleLiteral(args[index]);
+  if (typeof value === "string") return normalizeFill(value, fallback || palette.black);
+  return fallback;
+}
+
+function parseTurtleCall(statement) {
+  if (/^(?:import|from|def|class|if|while|with|return|screen|wn)\b/i.test(statement)) return null;
+  const match = statement.match(/^(?:\w+\s*=\s*)?(?:(?:t|pen|drawer|turtle)\.)?([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
+  if (!match) return null;
+  return {
+    name: match[1].toLowerCase(),
+    args: splitTurtleArgs(match[2])
+  };
+}
+
+function pythonHeadingToCanvas(angle) {
+  return normalizeAngle(-Number(angle || 0));
+}
+
+function turtleCodeToDsl(code, providedPlan = []) {
+  const actions = [];
+  const ignored = new Set(["speed", "hideturtle", "showturtle", "tracer", "update", "done", "exitonclick", "listen", "mainloop", "bgcolor", "title", "setup", "screensize", "clear", "reset"]);
+  const aliases = {
+    fd: "forward",
+    bk: "backward",
+    back: "backward",
+    lt: "left",
+    rt: "right",
+    pu: "penup",
+    up: "penup",
+    pd: "pendown",
+    down: "pendown",
+    seth: "setheading",
+    setheading: "setheading",
+    setpos: "goto",
+    setposition: "goto",
+    pencolor: "pencolor",
+    pensize: "pensize",
+    width: "pensize"
+  };
+  let fillColor = palette.yellow;
+
+  for (const statement of expandTurtleStatements(code)) {
+    const call = parseTurtleCall(statement);
+    if (!call) continue;
+    const name = aliases[call.name] || call.name;
+    const args = call.args;
+
+    if (ignored.has(name)) continue;
+
+    if (name === "penup") {
+      actions.push({ type: "pen_up" });
+    } else if (name === "pendown") {
+      actions.push({ type: "pen_down" });
+    } else if (name === "forward") {
+      actions.push({ type: "turtle_forward", distance: turtleNumber(args, 0, 80) });
+    } else if (name === "backward") {
+      actions.push({ type: "turtle_forward", distance: -turtleNumber(args, 0, 80) });
+    } else if (name === "right") {
+      actions.push({ type: "turtle_turn", angle: turtleNumber(args, 0, 90) });
+    } else if (name === "left") {
+      actions.push({ type: "turtle_turn", angle: -turtleNumber(args, 0, 90) });
+    } else if (name === "setheading") {
+      actions.push({ type: "turtle_set_heading", angle: pythonHeadingToCanvas(turtleNumber(args, 0, 0)) });
+    } else if (name === "home") {
+      actions.push({ type: "turtle_goto", x: 0, y: 0 });
+      actions.push({ type: "turtle_set_heading", angle: 0 });
+    } else if (name === "goto") {
+      actions.push({
+        type: "turtle_goto",
+        x: turtleNumber(args, 0, 0),
+        y: turtleNumber(args, 1, 0)
+      });
+    } else if (name === "circle") {
+      actions.push({
+        type: "turtle_python_circle",
+        radius: turtleNumber(args, 0, 36),
+        extent: args.length > 1 ? turtleNumber(args, 1, 360) : 360
+      });
+    } else if (name === "dot") {
+      const size = clamp(turtleNumber(args, 0, 12), 4, 80);
+      const fill = turtleColor(args, 1, state.turtle.stroke);
+      actions.push({ type: "turtle_circle", radius: size / 2, stroke: fill, fill, strokeWidth: 1 });
+    } else if (name === "color") {
+      const stroke = turtleColor(args, 0, state.turtle.stroke);
+      fillColor = turtleColor(args, 1, stroke);
+      actions.push({ type: "turtle_color", stroke });
+    } else if (name === "pencolor") {
+      actions.push({ type: "turtle_color", stroke: turtleColor(args, 0, state.turtle.stroke) });
+    } else if (name === "fillcolor") {
+      fillColor = turtleColor(args, 0, fillColor);
+    } else if (name === "pensize") {
+      actions.push({ type: "turtle_width", width: turtleNumber(args, 0, state.turtle.strokeWidth) });
+    } else if (name === "begin_fill") {
+      actions.push({ type: "fill_start", fill: fillColor });
+    } else if (name === "end_fill") {
+      actions.push({ type: "fill_end" });
+    }
+  }
+
+  const sanitizedActions = actions.map(sanitizeAction).filter(Boolean);
+  if (!sanitizedActions.length) {
+    return { clarification: "Turtle 代码里没有当前可执行的安全画笔命令。" };
+  }
+
+  const plan = Array.isArray(providedPlan) && providedPlan.length
+    ? providedPlan.map((step) => String(step || "").trim()).filter(Boolean).slice(0, 10)
+    : [`解析并执行 ${sanitizedActions.length} 条受限 turtle 画笔命令`];
+
+  return {
+    source: "turtle_code",
+    turtleCode: stripTurtleCodeFence(code),
+    plan,
+    actions: sanitizedActions
+  };
+}
+
 function sanitizeDsl(dsl) {
   if (!dsl || typeof dsl !== "object") {
     return { clarification: "LLM 没有返回可执行指令，已降级到本地规则。" };
+  }
+
+  const plan = Array.isArray(dsl.plan)
+    ? dsl.plan.map((step) => String(step || "").trim()).filter(Boolean).slice(0, 10)
+    : [];
+  const turtleCode = typeof dsl.turtleCode === "string" ? dsl.turtleCode.trim() : "";
+  if (turtleCode) {
+    return turtleCodeToDsl(turtleCode, plan);
   }
 
   if (dsl.clarification && !Array.isArray(dsl.actions)) {
@@ -1512,9 +1893,7 @@ function sanitizeDsl(dsl) {
 
   return {
     source: dsl.source || "llm",
-    plan: Array.isArray(dsl.plan)
-      ? dsl.plan.map((step) => String(step || "").trim()).filter(Boolean).slice(0, 10)
-      : [],
+    plan,
     actions
   };
 }
@@ -1604,6 +1983,10 @@ function llmContext() {
       "move_cursor with direction/gridUnits moves relative to the current cursor.",
       "draw_path line/curve with anchor cursor starts at the current cursor.",
       "draw_path circle with anchor cursor uses the current cursor as the circle center; after the circle is drawn, the runtime cursor ends on the right side of that circle.",
+      "For object sketches, prefer turtle-like local actions: goto, set_heading, circle, arc, fill_start, fill_end.",
+      "goto x/y are local offsets from the cursor at the start of this command. Local +x goes right, local +y goes up. gridX/gridY use the same local axes in grid units.",
+      "circle uses the current cursor as the center and keeps the cursor at that center after drawing.",
+      "arc uses the current cursor as the center; startAngle 0 points right, positive extent draws clockwise, and the cursor ends at the arc endpoint.",
       "For compact objects such as cars or animals, prefer widths around 4-8 grid units and heights around 2-5 grid units."
     ],
     lastObject: state.objects.find((object) => object.id === state.lastObjectId) || null,
@@ -1730,6 +2113,10 @@ async function executeDsl(dsl) {
 
   const shouldAnimate = shouldAnimateDrawing(dsl);
   state.drawCursor.active = shouldAnimate;
+  state.turtle.originX = state.turtle.x;
+  state.turtle.originY = state.turtle.y;
+  state.turtle.fillActive = false;
+  state.turtle.fill = "transparent";
 
   try {
     for (const action of actions) {
@@ -1742,6 +2129,10 @@ async function executeDsl(dsl) {
         await executeAnimatedTurtleTurnAction(action);
       } else if (action.type === "draw_path") {
         await executeAnimatedPathAction(action);
+      } else if (action.type === "turtle_goto") {
+        await executeAnimatedTurtleGotoAction(action);
+      } else if (action.type === "turtle_circle" || action.type === "turtle_arc" || action.type === "turtle_python_circle") {
+        await executeAnimatedTurtleStrokeAction(action);
       } else {
         executeAction(action);
       }
@@ -1767,7 +2158,7 @@ function shouldAnimateDrawing(dsl) {
   const actions = Array.isArray(dsl.actions) ? dsl.actions : [];
   if (actions.length < 2) return false;
   if (!Array.isArray(dsl.plan) || !dsl.plan.length) return false;
-  return actions.some((action) => action.type === "draw_path");
+  return actions.some((action) => ["draw_path", "turtle_goto", "turtle_circle", "turtle_arc", "turtle_python_circle"].includes(canonicalActionType(action.type)));
 }
 
 async function moveDrawingCursorToAction(action) {
@@ -1796,8 +2187,15 @@ async function moveDrawingCursorToAction(action) {
 }
 
 function actionPreviewPoint(action) {
-  if (action.type === "draw_path") {
+  const actionType = canonicalActionType(action.type);
+  if (actionType === "draw_path") {
     return normalizedPathPreviewPoint(action);
+  }
+  if (actionType === "turtle_goto") {
+    return turtleGotoTargetPoint(action);
+  }
+  if (actionType === "turtle_circle" || actionType === "turtle_arc" || actionType === "turtle_python_circle") {
+    return { x: state.turtle.x, y: state.turtle.y };
   }
   return null;
 }
@@ -1826,9 +2224,16 @@ function executeAction(action) {
     "pen_up",
     "turtle_forward",
     "turtle_turn",
+    "turtle_goto",
+    "turtle_set_heading",
+    "turtle_circle",
+    "turtle_arc",
+    "turtle_python_circle",
     "turtle_home",
     "turtle_color",
-    "turtle_width"
+    "turtle_width",
+    "fill_start",
+    "fill_end"
   ].includes(action.type)) {
     pushHistory();
     executeTurtleAction(action);
@@ -1907,6 +2312,75 @@ async function executeAnimatedTurtleTurnAction(action) {
   addLog(turnActionLabel(action.angle));
 }
 
+async function executeAnimatedTurtleGotoAction(action) {
+  pushHistory();
+  const from = { x: state.turtle.x, y: state.turtle.y };
+  const to = turtleGotoTargetPoint(action);
+  const steps = 16;
+  const object = state.turtle.penDown
+    ? addStrokeObject([from, from], {
+      label: "画笔线条",
+      stroke: state.turtle.stroke,
+      strokeWidth: state.turtle.strokeWidth
+    })
+    : null;
+
+  for (let i = 1; i <= steps; i += 1) {
+    const progress = i / steps;
+    const eased = 1 - (1 - progress) ** 3;
+    const current = {
+      x: from.x + (to.x - from.x) * eased,
+      y: from.y + (to.y - from.y) * eased
+    };
+    state.turtle.x = current.x;
+    state.turtle.y = current.y;
+    if (object) {
+      updateStrokePoints(object, [from, current]);
+    }
+    draw();
+    await wait(12);
+  }
+
+  state.turtle.x = to.x;
+  state.turtle.y = to.y;
+  if (object) {
+    updateStrokePoints(object, [from, to]);
+  }
+  state.actionTotal += 1;
+  addLog(turtleGotoLog(action));
+}
+
+async function executeAnimatedTurtleStrokeAction(action) {
+  pushHistory();
+  const draft = buildTurtleStroke(action);
+  const startCursor = { x: state.turtle.x, y: state.turtle.y, angle: state.turtle.angle };
+  const object = addStrokeObject([draft.points[0]], draft.options);
+  object.closed = false;
+
+  for (let i = 1; i < draft.points.length; i += 1) {
+    updateStrokePoints(object, draft.points.slice(0, i + 1), draft.closed && i === draft.points.length - 1);
+    const tip = object.points.at(-1);
+    state.turtle.x = tip.x;
+    state.turtle.y = tip.y;
+    updatePanels();
+    draw();
+    await wait(draft.delay);
+  }
+
+  if (action.type === "turtle_circle") {
+    state.turtle.x = startCursor.x;
+    state.turtle.y = startCursor.y;
+    state.turtle.angle = startCursor.angle;
+  } else if (action.type === "turtle_python_circle") {
+    finishPythonTurtleCircle(draft);
+  } else {
+    finishTurtleArc(action, draft);
+  }
+
+  state.actionTotal += 1;
+  addLog(draft.log);
+}
+
 function executeCursorMove(action) {
   const to = cursorTargetPoint(action);
   state.turtle.x = to.x;
@@ -1938,6 +2412,40 @@ function cursorMoveLog(action) {
   return `指针向${directionLabel(action.direction)}移动${Math.round(action.distance || gridUnit)}像素`;
 }
 
+function turtleOriginPixel() {
+  const { width, height } = canvasSize();
+  return {
+    x: (Number.isFinite(state.turtle.originX) ? state.turtle.originX : state.turtle.x) * width,
+    y: (Number.isFinite(state.turtle.originY) ? state.turtle.originY : state.turtle.y) * height
+  };
+}
+
+function turtleGotoTargetPoint(action) {
+  const { width, height } = canvasSize();
+  const origin = turtleOriginPixel();
+  const localX = Number(action.x);
+  const localY = Number(action.y);
+  return {
+    x: clamp((origin.x + (Number.isFinite(localX) ? localX : 0)) / Math.max(1, width), 0.04, 0.96),
+    y: clamp((origin.y - (Number.isFinite(localY) ? localY : 0)) / Math.max(1, height), 0.04, 0.96)
+  };
+}
+
+function turtleCurrentPixel() {
+  const { width, height } = canvasSize();
+  return {
+    x: state.turtle.x * width,
+    y: state.turtle.y * height
+  };
+}
+
+function turtleGotoLog(action) {
+  if (Number.isFinite(action.gridX) && Number.isFinite(action.gridY)) {
+    return `移动画笔到局部 (${action.gridX}, ${action.gridY}) 格`;
+  }
+  return `移动画笔到局部 (${Math.round(action.x)}, ${Math.round(action.y)})`;
+}
+
 function executeTurtleAction(action) {
   if (action.type === "pen_down") {
     state.turtle.penDown = true;
@@ -1951,15 +2459,37 @@ function executeTurtleAction(action) {
     return;
   }
 
+  if (action.type === "fill_start") {
+    state.turtle.fillActive = true;
+    state.turtle.fill = action.fill || palette.yellow;
+    addLog("开始填色");
+    return;
+  }
+
+  if (action.type === "fill_end") {
+    state.turtle.fillActive = false;
+    state.turtle.fill = "transparent";
+    addLog("结束填色");
+    return;
+  }
+
   if (action.type === "turtle_turn") {
     state.turtle.angle = normalizeAngle(state.turtle.angle + action.angle);
     addLog(turnActionLabel(action.angle));
     return;
   }
 
+  if (action.type === "turtle_set_heading") {
+    state.turtle.angle = normalizeAngle(action.angle);
+    addLog(`设置朝向 ${headingLabel(state.turtle.angle)}`);
+    return;
+  }
+
   if (action.type === "turtle_home") {
     state.turtle.x = 0.5;
     state.turtle.y = 0.5;
+    state.turtle.originX = 0.5;
+    state.turtle.originY = 0.5;
     state.turtle.angle = 0;
     addLog("画笔回到中心");
     return;
@@ -1974,6 +2504,37 @@ function executeTurtleAction(action) {
   if (action.type === "turtle_width") {
     state.turtle.strokeWidth = clamp(action.width || 4, 1, 14);
     addLog(`画笔线宽 ${state.turtle.strokeWidth}`);
+    return;
+  }
+
+  if (action.type === "turtle_goto") {
+    const from = { x: state.turtle.x, y: state.turtle.y };
+    const to = turtleGotoTargetPoint(action);
+    if (state.turtle.penDown) {
+      addStrokeObject([from, to], {
+        label: "画笔线条",
+        stroke: state.turtle.stroke,
+        strokeWidth: state.turtle.strokeWidth
+      });
+    }
+    state.turtle.x = to.x;
+    state.turtle.y = to.y;
+    addLog(turtleGotoLog(action));
+    return;
+  }
+
+  if (action.type === "turtle_circle") {
+    createTurtleCircle(action);
+    return;
+  }
+
+  if (action.type === "turtle_arc") {
+    createTurtleArc(action);
+    return;
+  }
+
+  if (action.type === "turtle_python_circle") {
+    createPythonTurtleCircle(action);
     return;
   }
 
@@ -1999,6 +2560,126 @@ function executeTurtleAction(action) {
     state.turtle.y = to.y;
     addLog(`${distance >= 0 ? "前进" : "后退"}${Math.abs(distance)}像素`);
   }
+}
+
+function createTurtleCircle(action) {
+  const draft = buildTurtleCircleStroke(action);
+  addStrokeObject(draft.points, { ...draft.options, closed: true });
+  addLog(draft.log);
+}
+
+function createTurtleArc(action) {
+  const draft = buildTurtleArcStroke(action);
+  addStrokeObject(draft.points, { ...draft.options, closed: false });
+  finishTurtleArc(action, draft);
+  addLog(draft.log);
+}
+
+function createPythonTurtleCircle(action) {
+  const draft = buildPythonTurtleCircleStroke(action);
+  addStrokeObject(draft.points, { ...draft.options, closed: draft.closed });
+  finishPythonTurtleCircle(draft);
+  addLog(draft.log);
+}
+
+function buildTurtleStroke(action) {
+  if (action.type === "turtle_circle") return buildTurtleCircleStroke(action);
+  if (action.type === "turtle_python_circle") return buildPythonTurtleCircleStroke(action);
+  return buildTurtleArcStroke(action);
+}
+
+function buildTurtleCircleStroke(action) {
+  const { width, height } = canvasSize();
+  const center = turtleCurrentPixel();
+  const radius = clamp(action.radius || 36, 6, Math.min(width, height) * 0.32);
+  const fill = action.fill || (state.turtle.fillActive ? state.turtle.fill : "transparent");
+  return {
+    points: arcCanvasPoints(center, radius, 0, 360),
+    options: {
+      label: "海龟圆",
+      stroke: action.stroke || state.turtle.stroke,
+      fill,
+      strokeWidth: action.strokeWidth || state.turtle.strokeWidth
+    },
+    center,
+    closed: true,
+    delay: 8,
+    log: "画一个圆"
+  };
+}
+
+function buildPythonTurtleCircleStroke(action) {
+  const { width, height } = canvasSize();
+  const start = turtleCurrentPixel();
+  const maxRadius = Math.min(width, height) * 0.32;
+  const signedRadius = clamp(Number(action.radius) || 36, -maxRadius, maxRadius);
+  const radius = Math.max(4, Math.abs(signedRadius));
+  const extent = Number.isFinite(Number(action.extent)) ? Number(action.extent) : 360;
+  const heading = (state.turtle.angle * Math.PI) / 180;
+  const leftNormal = {
+    x: Math.sin(heading),
+    y: -Math.cos(heading)
+  };
+  const center = {
+    x: start.x + leftNormal.x * signedRadius,
+    y: start.y + leftNormal.y * signedRadius
+  };
+  const radialStart = (Math.atan2(start.y - center.y, start.x - center.x) * 180) / Math.PI;
+  const sweep = -extent * Math.sign(signedRadius || 1);
+  const closed = Math.abs(Math.abs(extent) - 360) < 0.5 || Math.abs(extent) >= 360;
+  const fill = action.fill || (state.turtle.fillActive ? state.turtle.fill : "transparent");
+
+  return {
+    points: arcCanvasPoints(center, radius, radialStart, sweep),
+    options: {
+      label: "Turtle 圆弧",
+      stroke: action.stroke || state.turtle.stroke,
+      fill,
+      strokeWidth: action.strokeWidth || state.turtle.strokeWidth
+    },
+    center,
+    closed,
+    endHeading: normalizeAngle(state.turtle.angle + sweep),
+    delay: 9,
+    log: closed ? "按 turtle 画一个圆" : "按 turtle 画一段圆弧"
+  };
+}
+
+function buildTurtleArcStroke(action) {
+  const { width, height } = canvasSize();
+  const center = turtleCurrentPixel();
+  const radius = clamp(action.radius || 36, 6, Math.min(width, height) * 0.32);
+  return {
+    points: arcCanvasPoints(center, radius, action.startAngle || 0, action.extent || 120),
+    options: {
+      label: "海龟圆弧",
+      stroke: action.stroke || state.turtle.stroke,
+      fill: "transparent",
+      strokeWidth: action.strokeWidth || state.turtle.strokeWidth
+    },
+    center,
+    closed: false,
+    delay: 9,
+    log: "画一段圆弧"
+  };
+}
+
+function finishTurtleArc(action, draft) {
+  const tip = draft.points.at(-1);
+  if (tip) {
+    state.turtle.x = tip.x;
+    state.turtle.y = tip.y;
+  }
+  state.turtle.angle = normalizeAngle((action.startAngle || 0) + (action.extent || 0));
+}
+
+function finishPythonTurtleCircle(draft) {
+  const tip = draft.points.at(-1);
+  if (tip) {
+    state.turtle.x = tip.x;
+    state.turtle.y = tip.y;
+  }
+  state.turtle.angle = draft.endHeading;
 }
 
 async function executeAnimatedPathAction(action) {
@@ -2220,6 +2901,23 @@ function curvePoints(start, end, action) {
     points.push(normalizeCanvasPoint({
       x: inv * inv * start.x + 2 * inv * t * control.x + t * t * end.x,
       y: inv * inv * start.y + 2 * inv * t * control.y + t * t * end.y
+    }));
+  }
+  return points;
+}
+
+function arcCanvasPoints(center, radius, startAngle, extent) {
+  const numericExtent = Number(extent);
+  const sweep = Number.isFinite(numericExtent) ? numericExtent : 360;
+  const segments = clamp(Math.ceil(Math.abs(sweep) / 7.5), 10, 72);
+  const points = [];
+  for (let i = 0; i <= segments; i += 1) {
+    const progress = i / segments;
+    const degrees = (Number(startAngle) || 0) + sweep * progress;
+    const radians = (degrees * Math.PI) / 180;
+    points.push(normalizeCanvasPoint({
+      x: center.x + Math.cos(radians) * radius,
+      y: center.y + Math.sin(radians) * radius
     }));
   }
   return points;
