@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | GitHub/Gitee 仓库 | 已创建 | `https://github.com/JuieZhao/ai-voice-drawing-tool` |
 | README 文档 | 已有，持续更新 | 运行方式、能力说明、依赖说明、原创说明已记录 |
-| Demo 视频 | 待录制 | 录制后将链接补入 README |
+| Demo 视频 | 已录制 | README 已补充 Bilibili 链接 |
 | 设计文档 | 已有 | `DESIGN.md` |
 | 持续 PR 记录 | 已有 | 见 `docs/development-log.md` |
 
@@ -47,7 +47,7 @@
 | 运行方式 | 已完成 |
 | 依赖和第三方说明 | 已完成 |
 | 原创功能说明 | 已完成 |
-| Demo 视频链接 | 待补充 |
+| Demo 视频链接 | 已补充 |
 | 持续交付记录链接 | 已完成 |
 | 设计文档链接 | 已完成 |
 
@@ -87,8 +87,8 @@
 
 ## 6. 提交前最终动作
 
-1. 录制 Demo 视频并上传到可访问平台。
-2. 将 Demo 链接补入 README。
+1. 录制 Demo 视频并上传到可访问平台。（已完成）
+2. 将 Demo 链接补入 README。（已完成）
 3. 确认 GitHub 仓库在评审时可访问。
 4. 确认 `main` 分支可运行。
 5. 确认所有 PR 描述完整。

@@ -10,7 +10,7 @@
 | --- | --- |
 | 比赛议题 | 题目二：AI 语音绘图工具 |
 | 代码仓库 | `https://github.com/JuieZhao/ai-voice-drawing-tool` |
-| Demo 视频 | 待录制后补充可访问链接 |
+| Demo 视频 | [Bilibili：BV1FeJw64EJu](https://www.bilibili.com/video/BV1FeJw64EJu/?share_source=copy_web&vd_source=8bb24b58efe128520f962ab5b6dbad6e) |
 | 持续交付记录 | 见 `docs/development-log.md` |
 | 指令能力清单 | 见 `docs/command-list.md` |
 | 提交检查清单 | 见 `docs/submission-checklist.md` |
